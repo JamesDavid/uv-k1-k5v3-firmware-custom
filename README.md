@@ -136,7 +136,7 @@ remains available for navigation and operation.
 
 ### Overlay applications and APRS
 
-Labs can store up to 48 applications from the current collection of 36 in
+Labs can store up to 48 applications from the current collection of 41 in
 external Flash. Each app is loaded into a dedicated 4 KiB RAM overlay only
 while it is running, while larger read-only assets such as text, fonts, bitmaps
 and lookup tables remain in external Flash.
@@ -145,9 +145,9 @@ The current app collection includes:
 
 - radio tools: Broadcast FM, Fox Hunt, Beacon, Beam, Signal Finder, Spectrum3D
   and ToneCall,
-- digital and signal apps: ACARS RX, AIS RX, ATIS RX, APRS RX, APRS TX, APRS Edit,
-  APRS DIGI, KISS TNC, CW Decode, CW Keyer, CW USB, SSTV, POCSAG RX, Sonde M10,
-  Sonde M20, Sonde RS41 and EPIRB 406,
+- digital and signal apps: ACARS RX, AIS RX, ATIS RX, ATIS DSC RX, APRS RX,
+  APRS TX, APRS Edit, APRS DIGI, KISS TNC, CW Decode, CW Keyer, CW USB, SSTV,
+  POCSAG RX, Sonde M10, Sonde M20, Sonde RS41, GeoNav and EPIRB 406,
 - tools and diagnostics: AF Scope, AF Spectro, Resistor, System Info and Flash Map,
 - games and demos: Breakout, Cube3D, Hell Maze, Minesweeper, Plasma, Rapid Roll,
   Snake, Sokoban, Space Impact and Tetris.
@@ -157,6 +157,8 @@ common position formats and Mic-E data, and keeps a five-frame history. APRS TX
 uses an editable callsign (with boot-message fallback) and transmits a position beacon; its companion
 APRS Edit app edits the callsign, SSID, digipeater path, position, symbol and
 89-character comment.
+GeoNav reuses that APRS position as the home QTH and shows the bearing and
+distance to a position handed off by the RS41, M10 or M20 radiosonde app.
 APRS DIGI is a deliberately limited `WIDE1-1` fill-in digipeater with
 path-independent duplicate suppression and channel-busy protection.
 KISS TNC makes the radio the TNC of APRSdroid (or any KISS client) over the
