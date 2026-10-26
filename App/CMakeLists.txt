@@ -215,6 +215,20 @@ enable_feature(ENABLE_FEAT_F4HWN_OVERLAY_APPS
     apps/app_menu.c
 )
 enable_feature(ENABLE_FEAT_F4HWN_OVERLAY_BEAM)
+# OnePress text entry for overlay apps: the decoder (App/onepress, PolyForm
+# Noncommercial 1.0.0, github.com/JamesDavid/OnePress-Keyboard) with its model in
+# external flash, keypad only, sized for one radio message.
+enable_feature(ENABLE_FEAT_ONEPRESS
+    app/onepress_svc.c
+    onepress/onepress.c
+)
+if(ENABLE_FEAT_ONEPRESS)
+    target_compile_definitions(App INTERFACE OP_EXT_MODEL OP_NO_NN OP_NO_QWERTY
+        OP_MAX_BEAM=3 OP_MAX_SLOTS=24 OP_MAX_KEYS=72)
+    if(NOT ENABLE_FEAT_F4HWN_OVERLAY_APPS)
+        message(FATAL_ERROR "ENABLE_FEAT_ONEPRESS serves overlay apps: it requires ENABLE_FEAT_F4HWN_OVERLAY_APPS.")
+    endif()
+endif()
 enable_feature(ENABLE_FEAT_F4HWN_OVERLAY_INFO
     stack_usage.c
 )

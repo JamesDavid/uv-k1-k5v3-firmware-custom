@@ -52,9 +52,11 @@
  *      offset; serial_read / serial_write / serial_ctl (the USB-C serial
  *      port, K-plug reserved; APP_CAP_SERIAL); blit_page, lcd_feed,
  *      viewer_update (the LCD without the K5Viewer side effect), vfo_stage
- *      (deferred update of the current VFO) */
+ *      (deferred update of the current VFO)
+ *   4  OnePress text entry (APP_CAP_ONEPRESS): op_open, op_decode, op_render,
+ *      op_guesses, op_choice, op_word and the op_keys / op_text buffers */
 #define APP_ABI_MAJOR  1u
-#define APP_API_LEVEL  3u
+#define APP_API_LEVEL  4u
 
 /* App name length in app_header_t, the name handoff() takes (API level 3). */
 #define APP_NAME_LEN    16
@@ -151,6 +153,17 @@ enum {
  * is running: a read-modify-write would overwrite the executing app.  Services
  * such as cfg_save, fm_commit and beam_save must only stage resident RAM state;
  * APP_LaunchOverlay commits it after app_main() returns. */
+
+/* OnePress (API level 4): a slot held to a word id, as op_lock. */
+typedef struct {
+    uint16_t slot, id;
+} app_op_lock_t;
+#define APP_OP_MODEL_ADDR 0x001A0000u   /* model in external flash (reserve, after app growth room) */
+#define APP_OP_MODEL_MAX  0x0003E000u   /* up to the Sonic 4K reserve at 0x1DE000 */
+#define APP_OP_KEYS_MAX   72u           /* key presses in one message */
+#define APP_OP_TEXT_MAX   140u          /* its text (an APRS message is 67 characters) */
+#define APP_OP_NO_MODEL   (-1)
+enum { APP_OP_WORD = 0, APP_OP_PARTIAL = 1, APP_OP_PUNCT = 2, APP_OP_LITERAL = 3, APP_OP_UNKNOWN = 4 };
 
 typedef struct app_api {
     /* Fixed four-byte prefix; services remain naturally pointer-aligned. */
@@ -441,6 +454,35 @@ typedef struct app_api {
      * beam_save, so start from beam_get and change what is needed. NULL on a
      * build without the BEAM bridge. */
     bool     (*vfo_stage)(const app_beam_channel_t *ch);
+
+    /* ---- API level 4: OnePress text entry (APP_CAP_ONEPRESS) ----
+     * One key press per letter, decoded by the resident OnePress decoder
+     * (github.com/JamesDavid/OnePress-Keyboard) with its word model read from
+     * external flash at APP_OP_MODEL_ADDR (written there by its upload tool).
+     * Keys as the OnePress C API takes them: '2'-'9' letters, '0' a space, '#'
+     * punctuation (an apostrophe between letters), 'a'-'z' letters typed
+     * exactly (multi-tap) and 'A'-'J' the digits 0-9.
+     * op_open checks the model: 0, or APP_OP_NO_MODEL. op_decode decodes
+     * keys (NUL-terminated, APP_OP_KEYS_MAX at most) with the slots in locks
+     * held to the given words, and returns the number of slots (words and
+     * marks), or a negative error; op_render then writes its text (NUL-
+     * terminated) and returns the length. op_guesses lists slot's candidates
+     * best first, each scored by the whole decode with it locked (one decode
+     * each: about 15 ms), and leaves the decode as op_decode left it.
+     * op_choice gives the id and kind (APP_OP_WORD, APP_OP_PARTIAL: a word
+     * still being typed, ...) of a slot's word, op_word the text of an id.
+     * op_keys and op_text are resident buffers that outlive one app, for a
+     * draft and for the text an app hands to a sender (APP_OP_KEYS_MAX + 1
+     * and APP_OP_TEXT_MAX + 1 bytes); both are empty at boot. */
+    int8_t   (*op_open)(void);
+    int16_t  (*op_decode)(const char *keys, const app_op_lock_t *locks, uint8_t n_locks);
+    int16_t  (*op_render)(char *out, uint8_t cap);
+    uint8_t  (*op_guesses)(const char *keys, const app_op_lock_t *locks, uint8_t n_locks,
+                           uint8_t slot, uint16_t *ids, uint8_t max);
+    uint16_t (*op_choice)(uint8_t slot, uint8_t *kind);
+    uint8_t  (*op_word)(uint16_t id, char *buf, uint8_t cap);
+    char     *op_keys;
+    char     *op_text;
 } app_api_t;
 
 /* Serial ports and serial_ctl state bits (API level 3). */
@@ -452,7 +494,9 @@ enum { APP_SERIAL_USB = 0, APP_SERIAL_KPLUG = 1 };
 #define APP_SERIAL_ENUM    0x10u  /* event: USB (re-)enumerated by a host     */
 
 /* Unconditional, for the same reason: these offsets are what the apps and
- * the firmware must agree on, whatever the build options. */
+ * the firmware must agree on, whatever the build options. (Offsets of the
+ * 32-bit radio: a PC simulator with 64-bit pointers skips them.) */
+#if UINTPTR_MAX == 0xFFFFFFFFu
 _Static_assert(offsetof(app_api_t, sys_edition) == 276u &&
                offsetof(app_api_t, append_i32) == 328u,
                "the level 2 API prefix must stay 328 bytes");
@@ -461,8 +505,10 @@ _Static_assert(offsetof(app_api_t, handoff) == 356u &&
                offsetof(app_api_t, serial_read) == 368u &&
                offsetof(app_api_t, blit_page) == 380u &&
                offsetof(app_api_t, vfo_stage) == 392u &&
-               sizeof(app_api_t) == 396u,
+               offsetof(app_api_t, op_open) == 396u &&
+               sizeof(app_api_t) == 428u,
                "app_api_t is append-only: every edition shares this layout");
+#endif
 
 /* Wrap-safe modular ordering for deadlines less than half a cycle-counter
  * period away (~44.7 s at 48 MHz). Unused helpers emit no application code. */

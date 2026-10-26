@@ -127,6 +127,7 @@
 /* Serial ports (serial_read / serial_write / serial_ctl, API level 3): the
  * USB-C port; serial_ctl tells which ports this firmware has (APP_SERIAL_OK). */
 #define APP_CAP_SERIAL        0x00000040u
+#define APP_CAP_ONEPRESS      0x00000080u   /* the OnePress decoder and its model (API level 4) */
 
 /* Aligned RAM objects; app_overlay.c pins every serialized field offset. */
 typedef struct {

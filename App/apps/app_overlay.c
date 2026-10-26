@@ -40,6 +40,9 @@
 #include "k5viewer.h"
 #endif
 #include "app/app.h"
+#ifdef ENABLE_FEAT_ONEPRESS
+#include "app/onepress_svc.h"
+#endif
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
 #include "app/rxtx_log.h"
 #endif
@@ -106,6 +109,9 @@ enum {
 #endif
 #ifdef APP_SERIAL
                        | APP_CAP_SERIAL
+#endif
+#ifdef ENABLE_FEAT_ONEPRESS
+                       | APP_CAP_ONEPRESS
 #endif
 };
 
@@ -1314,6 +1320,16 @@ static const app_api_t app_api = {
     .viewer_update       = app_viewer_update,
 #ifdef ENABLE_FEAT_F4HWN_OVERLAY_BEAM
     .vfo_stage           = app_vfo_stage,
+#endif
+#ifdef ENABLE_FEAT_ONEPRESS
+    .op_open             = OP_Open,
+    .op_decode           = OP_Decode,
+    .op_render           = OP_Render,
+    .op_guesses          = OP_Guesses,
+    .op_choice           = OP_Choice,
+    .op_word             = OP_Word,
+    .op_keys             = gOpKeys,
+    .op_text             = gOpText,
 #endif
 };
 

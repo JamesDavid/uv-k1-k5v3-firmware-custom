@@ -58,6 +58,7 @@ CAPABILITIES = {
     "sysinfo": cdefine("app_overlay.h", "APP_CAP_SYSINFO"),
     "cfgproxy": cdefine("app_overlay.h", "APP_CAP_CFG_PROXY"),
     "serial": cdefine("app_overlay.h", "APP_CAP_SERIAL"),
+    "onepress": cdefine("app_overlay.h", "APP_CAP_ONEPRESS"),
 }
 
 def field(s: str, n: int) -> bytes:

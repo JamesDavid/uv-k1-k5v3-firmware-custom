@@ -200,6 +200,25 @@
             }
         },
         {
+            "name": "OnePress",
+            "inherits": "Labs",
+            "cacheVariables": {
+                "ENABLE_FEAT_ONEPRESS": true,
+                "ENABLE_SPECTRUM": false,
+                "ENABLE_FEAT_F4HWN_SPECTRUM": false,
+                "ENABLE_AIRCOPY": false,
+                "ENABLE_FMRADIO": false,
+                "ENABLE_FEAT_F4HWN_QRCODE": false,
+                "ENABLE_FEAT_F4HWN_RESCUE_OPS": false,
+                "ENABLE_FEAT_F4HWN_AUDIO_SCOPE": false,
+                "ENABLE_FEAT_F4HWN_FULL_WATCH": false,
+                "ENABLE_FEAT_F4HWN_LOGO": false,
+                "ENABLE_FEAT_F4HWN_LOGO_SAV": false,
+                "EDITION_STRING": "OnePress",
+                "TARGET": "f4hwn.onepress"
+            }
+        },
+        {
             "name": "Fusion_",
             "inherits": "default",
             "cacheVariables": {
@@ -299,6 +318,10 @@
         {
             "name": "Labs",
             "configurePreset": "Labs"
+        },
+        {
+            "name": "OnePress",
+            "configurePreset": "OnePress"
         },
         {
             "name": "Fusion_",
