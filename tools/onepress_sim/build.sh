@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the PC simulator of the OnePress apps (see opsim.c), from anywhere:
-#   tools/onepress_sim/build.sh && build/opsim model/onepress-s.bin "4 6 6 3 s"
+#   tools/onepress_sim/build.sh && build/opsim model/onepress-r.bin "4 6 6 3 s"
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 mkdir -p build

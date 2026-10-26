@@ -10,16 +10,20 @@ words around it say which. Two sender apps put the message on the air:
 The decoder is [OnePress](https://github.com/JamesDavid/OnePress-Keyboard)
 (`App/onepress`, PolyForm Noncommercial 1.0.0: the OnePress edition is for
 noncommercial use). It stays resident and serves the apps through API level 4
-(`APP_CAP_ONEPRESS`); its word model, 5,000 words including CQ, QTH, QSO, tnx,
-repeater, node and the like (`onepress-s.bin`, 246 KB), sits in external flash.
-Against a classic one-word-at-a-time predictive keypad with the same 5,000
-words (tests/baseline.js in the OnePress repository), on text it never saw:
+(`APP_CAP_ONEPRESS`); its word model, 13,000 words including CQ, QTH, QSO, tnx,
+repeater, node and the like (`onepress-r.bin`, 491 KB), sits in external flash
+at 0x162000. Against a classic one-word-at-a-time predictive keypad with the
+same words (`tests/baseline.js` in the OnePress repository), on text it never
+saw, the words neither knows spelled out:
 
 | | Classic keypad | OnePress |
 |---|---|---|
-| Radio messages: words right | 82.6% | **92.7%** |
-| Everyday text messages: words right | **90.7%** | 89.0% |
+| Radio messages: words right | 78.9% | **96.0%** |
+| Everyday text messages: words right | 90.0% | **94.9%** |
 | Everyday text messages: punctuation right | 19% | **47%** |
+
+3.6% of everyday words are not among its 13,000: spell those with `ABC`.
+`onepress-s.bin` (246 KB, 5,000 words) works too, with more words to spell.
 
 ## Install
 
@@ -30,7 +34,7 @@ words (tests/baseline.js in the OnePress repository), on text it never saw:
 2. Build the apps, `./compile-app.sh onepress opaprs opcw`, and install
    `OnePress.app`, `OPAPRS.app` and `OPCW.app` with UV Studio.
 3. Upload the model over the USB-C cable, from the main screen:
-   `python tools/onepress_upload.py COM5 onepress-s.bin` (`pip install pyserial`;
+   `python tools/onepress_upload.py COM5 onepress-r.bin` (`pip install pyserial`;
    the model is in the OnePress repository's `model/` folder). Uploading again
    only rewrites what changed.
 
@@ -93,12 +97,12 @@ receivers decoded first try.
 against a simulated radio: the real resident service and decoder, the model
 file as the external flash, keys from a script, the screen as text, and every
 APRS transmission decoded back from its tones, FCS checked. For example
-`build/opsim onepress-s.bin "6 6 0 6 9 0 9 2 9 0 4 6 6 3 s"` shows "On my way home".
+`build/opsim onepress-r.bin "6 6 0 6 9 0 9 2 9 0 4 6 6 3 s"` shows "On my way home".
 
 ## Resources
 
 The decoder takes about 21 KB of flash and 2.1 KB of RAM (1.6 KB of working
 memory, a 256-byte read cache, the model's table), plus up to 2.5 KB of stack
 while it decodes; `System Info` shows the stack margin left. A key press reads
-the model about 1,000 times (32 bytes each) with the cache. The apps fit the
+the model about 2,000 times (32 bytes each, about 16 us at 24 MHz) with the cache. The apps fit the
 4 KiB overlay: OnePress 3.0 KB, OP APRS 2.7 KB, OP CW 1.5 KB.

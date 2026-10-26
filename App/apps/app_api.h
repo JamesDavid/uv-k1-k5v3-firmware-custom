@@ -158,8 +158,8 @@ enum {
 typedef struct {
     uint16_t slot, id;
 } app_op_lock_t;
-#define APP_OP_MODEL_ADDR 0x001A0000u   /* model in external flash (reserve, after app growth room) */
-#define APP_OP_MODEL_MAX  0x0003E000u   /* up to the Sonic 4K reserve at 0x1DE000 */
+#define APP_OP_MODEL_ADDR 0x00162000u   /* model in external flash: the reserve after the 48 app slots */
+#define APP_OP_MODEL_MAX  0x0007C000u   /* up to the Sonic 4K reserve at 0x1DE000 */
 #define APP_OP_KEYS_MAX   72u           /* key presses in one message */
 #define APP_OP_TEXT_MAX   140u          /* its text (an APRS message is 67 characters) */
 #define APP_OP_NO_MODEL   (-1)

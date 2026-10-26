@@ -2,10 +2,10 @@
 """Upload a OnePress word model to a UV-K1 / UV-K5 V3 running the OnePress firmware.
 
     pip install pyserial
-    python tools/onepress_upload.py COM5 onepress-s.bin        (Linux: /dev/ttyACM0)
+    python tools/onepress_upload.py COM5 onepress-r.bin        (Linux: /dev/ttyACM0)
 
-The model (onepress-s.bin, 246 KB, from github.com/JamesDavid/OnePress-Keyboard)
-goes to external flash at 0x1A0000, where the OnePress apps' decoder reads it
+The model (onepress-r.bin, 491 KB, from github.com/JamesDavid/OnePress-Keyboard;
+onepress-s.bin, 246 KB, works too) goes to external flash at 0x162000, where the OnePress apps' decoder reads it
 (APP_OP_MODEL_ADDR in App/apps/app_api.h). Each 4 KiB sector is compared first
 (CRC-32) and only rewritten when it differs, then checked again, so uploading
 the same model twice changes nothing. It uses the firmware's raw external-flash
@@ -21,8 +21,8 @@ import zlib
 
 import serial
 
-MODEL_ADDR = 0x1A0000
-MODEL_MAX = 0x3E000             # up to the Sonic 4K reserve at 0x1DE000
+MODEL_ADDR = 0x162000          # the reserve after the 48 app slots
+MODEL_MAX = 0x7C000             # up to the Sonic 4K reserve at 0x1DE000
 SECTOR = 0x1000
 CHUNK = 128                     # PY25Q16_RAW_CHUNK_SIZE
 OBFUS = bytes.fromhex("166c14e62e910d402135d5401303e980")
@@ -104,13 +104,13 @@ class Radio:
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("port", help="the radio's USB serial port (COM5, /dev/ttyACM0)")
-    ap.add_argument("model", help="the model file (onepress-s.bin)")
+    ap.add_argument("model", help="the model file (onepress-r.bin)")
     a = ap.parse_args()
     data = open(a.model, "rb").read()
     if data[:4] != b"KPD2":
         sys.exit(f"{a.model} is not a OnePress model (KPD2)")
     if len(data) > MODEL_MAX:
-        sys.exit(f"{a.model} is {len(data)} bytes: at most {MODEL_MAX} fit (use onepress-s.bin)")
+        sys.exit(f"{a.model} is {len(data)} bytes: at most {MODEL_MAX} fit (use onepress-r.bin)")
     r = Radio(a.port)
     print(f"Radio: {r.hello()}")
     sectors = (len(data) + SECTOR - 1) // SECTOR
