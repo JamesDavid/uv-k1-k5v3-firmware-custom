@@ -11,8 +11,10 @@
  *   2-9      a letter (one press each, whichever of the key's letters)
  *   0 / 1    a space / punctuation (the decoder picks . , ? ! or an apostrophe)
  *   held     a digit key held down types the digit
- *   * / DOWN the next guess for the last word; * accepts a completion shown
- *   UP       the previous guess
+ *   *        the next guess for the selected word (the last, unless UP/DOWN
+ *            moved); on a word still being typed, take the completion shown
+ *   UP/DOWN  select the word before / after, to fix it with *; typing or
+ *            deleting goes back to the end
  *   F        ABC: spell exactly with multi-tap (call signs, names), F again back
  *   EXIT     delete; held, delete words; on an empty message, quit
  *   MENU     send: 1 APRS message, 2 CW, 3 clear
@@ -53,7 +55,8 @@ static struct {
     uint8_t mode, screen, sender;       /* sender: 1 APRS, 2 CW (PTT sends that way) */
     uint8_t key, held;                  /* the key down, and what holding it did    */
     uint8_t tapKey, tapAt;              /* multi-tap: key, letter index             */
-    uint8_t nLocks, nGuess, guess;      /* guesses for the last slot (0: not listed) */
+    uint8_t nLocks, nGuess, guess;      /* guesses for the selected slot (0: not listed) */
+    int16_t sel;                        /* the selected slot; -1: the last (typing)   */
     int16_t slots;                      /* op_decode's result                        */
     bool running, redraw, ok;
     uint32_t downAt, tapMs, repeatAt;
@@ -107,9 +110,12 @@ static void unlockLast(void)
     g.nLocks = k;
 }
 
+static int16_t selected(void) { return g.sel >= 0 && g.sel < g.slots ? g.sel : g.slots - 1; }
+
 static void add(char c)
 {
     if (g.n >= APP_OP_KEYS_MAX) return;
+    g.sel = -1;
     if (isLetter(c) && g.n && (isLetter(g.keys[g.n - 1]) || g.keys[g.n - 1] == '#'))
         unlockLast();                   /* the last word changes: its guess goes */
     g.keys[g.n++] = c;
@@ -123,14 +129,15 @@ static void back(bool word)
         while (g.n && isLetter(g.keys[g.n - 1])) g.n--;
     } else if (g.n) g.n--;
     g.tapKey = 0;
+    g.sel = -1;
     decode();
 }
 
-/* The next (dir 1) or previous (-1) guess for the last slot, best first. */
+/* The next (dir 1) or previous (-1) guess for the selected slot, best first. */
 static void nextGuess(int8_t dir)
 {
     if (g.slots <= 0) return;
-    uint8_t slot = (uint8_t)(g.slots - 1);
+    uint8_t slot = (uint8_t)selected();
     if (!g.nGuess) {
         g.nGuess = A->op_guesses(g.keys, g.locks, g.nLocks, slot, g.ids, MAX_GUESS);
         uint16_t cur = A->op_choice(slot, NULL);
@@ -212,8 +219,12 @@ static void press(uint8_t key)
     if (key <= APP_KEY_9) { digit(key); return; }
     if (key != APP_KEY_F) g.tapKey = 0;
     int8_t dir = A->nav_dir(key);
-    if (key == APP_KEY_STAR) { if (!accept()) nextGuess(1); }
-    else if (dir) nextGuess(dir);
+    if (key == APP_KEY_STAR) { if (g.sel >= 0 || !accept()) nextGuess(1); }
+    else if (dir && g.slots > 0) {              /* UP: the word before, DOWN: after */
+        int16_t j = selected() - dir;
+        g.sel = j >= g.slots - 1 ? -1 : j < 0 ? 0 : j;
+        g.nGuess = 0;
+    }
     else if (key == APP_KEY_F) { g.mode ^= MODE_ABC; g.tapKey = 0; }
     else if (key == APP_KEY_MENU) { g.screen = SCR_MENU; g.line[0] = 0; }
     else if (key == APP_KEY_PTT) send(g.sender ? g.sender : 1);
@@ -271,7 +282,7 @@ static void draw(void)
         A->print_normal("2 CW", 4, 0, 3);
         A->print_normal("3 Clear", 4, 0, 4);
     } else {
-        /* the text, wrapped at spaces, its last ROWS lines; the last word underlined */
+        /* the text, wrapped at spaces, its last ROWS lines; the selected word underlined */
         uint8_t start[24], nl = 0, len = slen(g.text), s = 0;
         while (nl < sizeof start) {
             start[nl++] = s;
@@ -280,15 +291,28 @@ static void draw(void)
             while (e > s && g.text[e] != ' ') e--;
             s = (uint8_t)(e > s ? e + 1 : s + COLS);
         }
-        uint8_t first = nl > ROWS ? nl - ROWS : 0, word = len;
-        while (word && g.text[word - 1] != ' ') word--;
+        /* where the selected slot is: words (letters, digits, ' - : and a . or , between
+         * digits) and marks are slots in order, spaces aren't */
+        uint8_t first = nl > ROWS ? nl - ROWS : 0, word = len, wend = len;
+        int16_t want = selected();
+        for (uint8_t i = 0, j = 0; i < len;) {
+            char ch = g.text[i];
+            if (ch == ' ') { i++; continue; }
+            uint8_t e = i + 1;
+            if (ch != '.' && ch != ',' && ch != '?' && ch != '!')
+                while (e < len && g.text[e] != ' ' && g.text[e] != '?' && g.text[e] != '!' &&
+                       !((g.text[e] == '.' || g.text[e] == ',') && !(e + 1 < len && g.text[e + 1] >= '0' && g.text[e + 1] <= '9')))
+                    e++;
+            if (j++ == want) { word = i; wend = e; break; }
+            i = e;
+        }
         for (uint8_t l = first; l < nl; l++) {
             uint8_t a = start[l], b = l + 1 < nl ? start[l + 1] : len, c = 0;
             while (a + c < b && c < COLS) { g.line[c] = g.text[a + c]; c++; }
             g.line[c] = 0;
             A->print_normal(g.line, 0, 0, l - first);
             if (word < len && word >= a && word < b) {
-                uint8_t x = (uint8_t)((word - a) * 7), e = (uint8_t)((b - a < len - a ? b - a : len - a) * 7);
+                uint8_t x = (uint8_t)((word - a) * 7), e = (uint8_t)(((wend < b ? wend : b) - a) * 7);
                 A->draw_line(A->fb, x, (int16_t)((l - first) * 8 + 7), (int16_t)(e - 2), (int16_t)((l - first) * 8 + 7), true);
             }
         }
@@ -298,7 +322,8 @@ static void draw(void)
         if (g.nGuess > 1) { o = put(o, "  GUESS "); o = putu(o, g.guess + 1u); *o++ = '/'; o = putu(o, g.nGuess); }
         uint8_t kind = APP_OP_WORD;
         if (g.slots > 0) A->op_choice((uint8_t)(g.slots - 1), &kind);
-        if (kind == APP_OP_PARTIAL) o = put(o, "  * TAKES IT");
+        if (g.sel >= 0) o = put(o, "  * FIXES");
+        else if (kind == APP_OP_PARTIAL) o = put(o, "  * TAKES IT");
         tiny(0, 50, o);
     }
     A->blit_status();
@@ -312,6 +337,7 @@ void app_main(const app_api_t *api)
     g.api = api;
     g.keys = api->op_keys;
     g.key = APP_KEY_INVALID;
+    g.sel = -1;
     g.ok = api->op_open() == 0;
     api->cfg_load(c, sizeof c);
     if (c[0] == CFG_MAGIC && c[1] <= 2) g.sender = c[1];

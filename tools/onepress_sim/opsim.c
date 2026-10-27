@@ -118,7 +118,7 @@ static uint32_t ticks_ms(void) { return now_ms() / 10 * 10; }
 static char *append_u32(char *o, uint32_t v) { return o + sprintf(o, "%u", v); }
 static char *append_i32(char *o, int32_t v) { return o + sprintf(o, "%d", v); }
 static uint64_t uidivmod(uint32_t n, uint32_t d) { return d ? (uint64_t)(n % d) << 32 | (n / d) : n; }
-static int8_t nav_dir(uint8_t k) { return k == APP_KEY_UP ? -1 : k == APP_KEY_DOWN ? 1 : 0; }
+static int8_t nav_dir(uint8_t k) { return k == APP_KEY_UP ? 1 : k == APP_KEY_DOWN ? -1 : 0; }   /* as app_overlay.c */
 static void boot_callsign(char *buf, uint8_t len) { snprintf(buf, len, "N0CALL"); }
 
 /* ---- settings, hand-off ---- */

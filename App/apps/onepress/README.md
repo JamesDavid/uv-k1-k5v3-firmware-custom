@@ -46,8 +46,8 @@ saw, the words neither knows spelled out:
 | 0 | a space |
 | 1 | punctuation (the decoder picks `.` `,` `?` `!`, or an apostrophe inside a word) |
 | a digit key, held | the digit itself |
-| `*` | take the completion shown (`* TAKES IT`), else the next guess for the last word |
-| DOWN / UP | the next / previous guess for the last word (best first, by the whole sentence) |
+| `*` | take the completion shown (`* TAKES IT`), else the next guess for the selected word (best first, by the whole sentence) |
+| UP / DOWN | select the word before / after, to fix it with `*` (`* FIXES`); the rest of the message re-decodes around the fix. DOWN past the last word, typing or deleting goes back to the end |
 | F | `ABC`: spell exactly with multi-tap (call signs, names); F again: back |
 | EXIT | delete the last key; held, delete words; on an empty message, quit |
 | MENU | send: `1` APRS message, `2` CW, `3` clear |
@@ -105,4 +105,4 @@ The decoder takes about 21 KB of flash and 2.1 KB of RAM (1.6 KB of working
 memory, a 256-byte read cache, the model's table), plus up to 2.5 KB of stack
 while it decodes; `System Info` shows the stack margin left. A key press reads
 the model about 2,000 times (32 bytes each, about 16 us at 24 MHz) with the cache. The apps fit the
-4 KiB overlay: OnePress 3.0 KB, OP APRS 2.7 KB, OP CW 1.5 KB.
+4 KiB overlay: OnePress 3.2 KB, OP APRS 2.7 KB, OP CW 1.5 KB.
