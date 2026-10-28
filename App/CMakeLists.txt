@@ -223,7 +223,7 @@ enable_feature(ENABLE_FEAT_ONEPRESS
     onepress/onepress.c
 )
 if(ENABLE_FEAT_ONEPRESS)
-    target_compile_definitions(App INTERFACE OP_EXT_MODEL OP_NO_NN OP_NO_QWERTY
+    target_compile_definitions(App INTERFACE OP_EXT_MODEL OP_NO_NN OP_NO_QWERTY OP_NO_CJK OP_NO_ADDRESS
         OP_MAX_BEAM=3 OP_MAX_SLOTS=24 OP_MAX_KEYS=72)
     if(NOT ENABLE_FEAT_F4HWN_OVERLAY_APPS)
         message(FATAL_ERROR "ENABLE_FEAT_ONEPRESS serves overlay apps: it requires ENABLE_FEAT_F4HWN_OVERLAY_APPS.")

@@ -53,6 +53,10 @@ void op_ext_read(uint32_t addr, void *dst, uint32_t n);
 #ifndef OP_MAX_BEAM
 #define OP_MAX_BEAM 16          /* largest beam op_decode accepts; 4-8 is plenty */
 #endif
+/* -DOP_NO_CJK leaves out splitting Chinese runs into words (about 12 KB of stack while it runs,
+ * Chinese models only); without it a Chinese model decodes only with spaces between words.
+ * -DOP_NO_ADDRESS leaves out reading first#last#gmail#com as an email or web address (about 1 KB
+ * of code); such keys then decode as words (first-last-gmail-com). */
 #define OP_MAX_EXACT 40         /* dictionary words considered per slot */
 #define OP_MAX_COMPLETIONS 12   /* extra prefix completions for the word being typed */
 #ifndef OP_USER_WORDS
@@ -72,16 +76,18 @@ void op_ext_read(uint32_t addr, void *dst, uint32_t n);
                                    OP_NONE for the plain number (5.30) */
 #define OP_COMPOUND_ID 0xFFF0   /* ids of known words run together (lollypops), OP_COMPOUND_ID + 0..5 in
                                    order of preference */
+#define OP_ADDRESS_ID 0xFFF6    /* an email or web address typed with # for the dots (first.last@gmail.com):
+                                   OP_ADDRESS_ID with the '@', OP_ADDRESS_ID + 1 all dots */
 #define OP_TIME_BEFORE 10       /* words after which a number is likely a time (at, by, until...) */
 
 enum { OP_OK = 0, OP_ERR_MODEL = -1, OP_ERR_TOO_LONG = -2, OP_ERR_SPACE = -3, OP_ERR_ARG = -4 };
 
 /* What each slot was decoded as. */
-enum { OP_WORD, OP_PARTIAL, OP_PUNCT, OP_LITERAL, OP_UNKNOWN, OP_NUMBER, OP_TIME, OP_COMPOUND };
+enum { OP_WORD, OP_PARTIAL, OP_PUNCT, OP_LITERAL, OP_UNKNOWN, OP_NUMBER, OP_TIME, OP_COMPOUND, OP_ADDRESS };
 
 enum { OP_P_QQ, OP_P_QN, OP_P_DQ, OP_P_CF, OP_P_DB, OP_P_CB, OP_P_EB,
        OP_P_APOSTROPHE, OP_P_COMPLETION, OP_P_LITERAL, OP_P_UNKNOWN,
-       OP_P_SLIP_SUB, OP_P_SLIP_DUP, OP_P_FLAGS,   /* optional in the file (older ones stop before them) */
+       OP_P_SLIP_SUB, OP_P_SLIP_DUP, OP_P_FLAGS, OP_P_CS,   /* optional in the file (older ones stop before them) */
        OP_N_PARAMS };
 
 typedef struct {
@@ -209,13 +215,14 @@ typedef struct {
 
 typedef struct {
     uint8_t type;       /* internal token type */
-    char lit;           /* punctuation typed exactly, or 0; a word joined to the one before by a hyphen: '-' */
+    char lit;           /* punctuation typed exactly, or 0; a word joined to the one before by a hyphen: '-';
+                           a handle (@name) '@', a hashtag '#' */
     uint16_t off, len;  /* word: span of keys[] / lits[]; space: its position in the keys given */
 } op_tok;
 
 typedef struct {
     uint16_t id;        /* token id; OP_NONE for OP_LITERAL / OP_UNKNOWN / OP_NUMBER, OP_TIME_ID for OP_TIME,
-                           OP_COMPOUND_ID + rank for OP_COMPOUND */
+                           OP_COMPOUND_ID + rank for OP_COMPOUND, OP_ADDRESS_ID + 0 or 1 for OP_ADDRESS */
     uint8_t kind;       /* OP_WORD, OP_PARTIAL, ... */
 } op_choice;
 

@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 mkdir -p build
-OP="-DOP_EXT_MODEL -DOP_NO_NN -DOP_NO_QWERTY -DOP_MAX_BEAM=3 -DOP_MAX_SLOTS=24 -DOP_MAX_KEYS=72"
+OP="-DOP_EXT_MODEL -DOP_NO_NN -DOP_NO_QWERTY -DOP_NO_CJK -DOP_NO_ADDRESS -DOP_MAX_BEAM=3 -DOP_MAX_SLOTS=24 -DOP_MAX_KEYS=72"
 I="-Itools/onepress_sim -IApp"
 APP="-std=gnu11 -O1 -fno-builtin -Wno-attributes"
 gcc $APP $I -Dapp_main=onepress_main -Dmemset=op_memset -Dmemcpy=op_memcpy -c App/apps/onepress/onepress_app.c -o build/sim_onepress.o

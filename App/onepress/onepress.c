@@ -15,6 +15,8 @@ static const char FIRST_LETTER[8] = "adgjmptw";     /* first letter of keys 2-9 
 #define FLAG_GREEK_Q 4          /* show the question mark as ; (Greek) */
 #define FLAG_FR_SPACE 8         /* a narrow no-break space (U+202F) before ? ! : (French) */
 #define FLAG_ARABIC 16          /* show ? and , as Arabic U+061F and U+060C */
+#define FLAG_CJK 32             /* Chinese: no spaces between words, the marks full width, a word
+                                 * being typed as its pinyin so far, no capitals */
 #define AFTER_NUMBER 0xFFFE     /* beam state after a number (the model has no number token) */
 #define AFTER_DECIMAL 0xFFFC    /* after a number that could have been a time but was read as 5.30 */
 #define TIME_BONUS 8            /* nats for "am"/"pm" right after a number or a time */
@@ -136,6 +138,7 @@ int op_model_open(op_model *m, const void *data, size_t size) {
     m->param[OP_P_SLIP_SUB] = (int16_t)(-12 * m->scale);     /* defaults for files without them */
     m->param[OP_P_SLIP_DUP] = (int16_t)(-8 * m->scale);
     m->param[OP_P_FLAGS] = FLAG_I;
+    m->param[OP_P_CS] = 0;
     for (int i = 0; i < OP_N_PARAMS && 2u * i + 2 <= len[14]; i++) m->param[i] = AI16(SEC(int16_t, 14), i);
     m->q_skip = SEC(uint16_t, 15);
     m->n_skip = len[15] / 2;
@@ -483,7 +486,8 @@ static uint16_t lit_of(int ch) {
  * between digits; a '#' just before a number is '$'. Digits next to exactly spelled letters
  * stay in the word (call signs). A number's span of keys[] holds '$', '0'-'9', '.', ',' and
  * 's' for a separator format_number chooses. See decoder.js tokenize. */
-static int tokenize(op_decoder *d, const char *keys, const char *hint) {
+/* cjk (Chinese): '#' is always punctuation (decoder.js tokenize). */
+static int tokenize(op_decoder *d, const char *keys, const char *hint, int cjk) {
     int n = (int)strlen(keys), nk = 0, hn = 0;
     if (n > OP_MAX_KEYS) return OP_ERR_TOO_LONG;
     d->n_toks = 0;
@@ -508,7 +512,7 @@ static int tokenize(op_decoder *d, const char *keys, const char *hint) {
                    d->keys[nk - 1] >= '0' && d->keys[nk - 1] <= '9' && is_digit_lit(nxt)) {
             d->keys[nk] = ch == '#' ? 's' : ch; d->lits[nk++] = 0; last->len++;
         } else if (ch == '#') {
-            if (last && last->type == TOK_WORD && is_letter_key(nxt)) {
+            if (last && last->type == TOK_WORD && is_letter_key(nxt) && !cjk) {
                 d->keys[nk] = '#'; d->lits[nk++] = 0; last->len++;
             } else {
                 t->type = TOK_PUNCT; t->lit = 0; d->n_toks++;
@@ -545,7 +549,18 @@ static int tokenize(op_decoder *d, const char *keys, const char *hint) {
                 }
             }
             if (!(last && last->type == TOK_WORD)) {
-                t->type = TOK_WORD; t->lit = 0; t->off = (uint16_t)nk; t->len = 0; d->n_toks++;
+                /* A predictive '#' at the start or after a space, right before a letter, makes a
+                 * handle: @name; two make a hashtag: #tag. */
+                char pre = 0;
+                #define MARK(k) (d->n_toks >= (k) && d->toks[d->n_toks - (k)].type == TOK_PUNCT && \
+                                 !d->toks[d->n_toks - (k)].lit && i0 >= (k) && keys[i0 - (k)] == '#')
+                #define OPEN(k) (d->n_toks < (k) || d->toks[d->n_toks - (k)].type == TOK_SPACE)
+                if (!cjk && MARK(1) && MARK(2) && OPEN(3)) { d->n_toks -= 2; pre = '#'; }
+                else if (!cjk && MARK(1) && OPEN(2)) { d->n_toks -= 1; pre = '@'; }
+                #undef MARK
+                #undef OPEN
+                t = &d->toks[d->n_toks];
+                t->type = TOK_WORD; t->lit = pre; t->off = (uint16_t)nk; t->len = 0; d->n_toks++;
                 last = t;
             }
             if (press < hn) d->hints[nk] = hcp[press];
@@ -597,9 +612,136 @@ static char time_kind(const char *k, int kn) {
     return h <= 24 && (k[kn - 2] - '0') * 10 + (k[kn - 1] - '0') <= 59 ? sep : 0;
 }
 
-/* ---- candidates ---- */
-
+/* A slot candidate: a token id, what kind it is, and its penalty. */
 typedef struct { uint16_t id; uint8_t kind; int32_t pen; } cand;
+
+/* ---- email and web addresses (decoder.js addressOf) ---- */
+#define ADDRESS_ALT (-2)        /* nats: the all-dots reading after the one with '@' */
+#ifndef OP_NO_ADDRESS
+static const char *const ADDRESS_ENDS[] = { "com", "org", "net", "edu", "gov", "io", "co", "us", "uk", "ca", "de",
+    "info", "app", "ai", "fr", "au", "nz", "ie", "jp", "tv", "biz" };
+static const char *const ADDRESS_WORDS[] = { "www", "gmail", "yahoo", "hotmail", "outlook", "icloud", "aol",
+    "protonmail", "proton", "mail", "live", "msn", "comcast" };
+static const char *const ADDRESS_SECOND[] = { "co", "com", "ac", "org", "net", "gov", "edu" };   /* name@bbc.co.uk */
+#define N_OF(a) ((int)(sizeof a / sizeof a[0]))
+#define ADDRESS_PIECES 8
+/* A piece's text: a word of the lists above (s), else a dictionary word (id), else the letters
+ * typed exactly or tapped, keys [a, b) of the token. */
+typedef struct { const char *s; uint16_t id, a, b; } addr_piece;
+
+static const char *fixed_find(const char *const *list, int nl, const char *k, int kn, const uint16_t *lit) {
+    for (int i = 0; i < nl; i++) {
+        int wn = (int)strlen(list[i]), ok = wn == kn;
+        for (int j = 0; ok && j < kn; j++) ok = KEY_OF[list[i][j] - 'a'] == k[j];
+        if (ok && lit_match_text(list[i], wn, 1, lit, kn)) return list[i];
+    }
+    return NULL;
+}
+/* Writes the piece's text to out (NULL: only measures it); returns its length. */
+static int piece_text(const op_decoder *d, const op_model *m, const op_tok *t, const addr_piece *p, char *out) {
+    if (p->s) {
+        int n = (int)strlen(p->s);
+        if (out) memcpy(out, p->s, (size_t)n);
+        return n;
+    }
+    if (p->id != OP_NONE) {
+        const char *w;
+        char wb[OP_WORD_BUF];
+        int wn = word_at(m, p->id, &w, wb);
+        if (out) memcpy(out, w, (size_t)wn);
+        return wn;
+    }
+    int n = 0;
+    for (int k = p->a; k < p->b; k++) {
+        uint16_t l = d->lits[t->off + k];
+        if (!l) l = d->hints[t->off + k];
+        if (l < 0x80) { if (out) out[n] = (char)l; n++; }
+        else { if (out) { out[n] = (char)(0xC0 | l >> 6); out[n + 1] = (char)(0x80 | (l & 0x3F)); } n += 2; }
+    }
+    return n;
+}
+static int piece_is(const op_decoder *d, const op_model *m, const op_tok *t, const addr_piece *p, const char *w) {
+    char b[8];
+    int wn = (int)strlen(w);
+    return piece_text(d, m, t, p, NULL) == wn && piece_text(d, m, t, p, b) == wn && memcmp(b, w, (size_t)wn) == 0;
+}
+static int word_fits(const op_decoder *d, const op_model *m, const op_tok *t, int len, int kind);
+static int is_qwerty(const op_decoder *d, const op_tok *t);
+static int qwerty_cands(const op_decoder *d, const op_model *m, const op_tok *t, int is_last,
+                        cand *out, cand *comp, int *n_comp);
+/* An email or web address typed with '#' for the dots: first#last#gmail#com is
+ * first.last@gmail.com (decoder.js addressOf). Writes reading r (0: with the '@' if it has one,
+ * else all dots; 1: all dots, only when 0 has the '@') to out (NULL: only measures it) and returns
+ * its length, or 0 if t isn't an address or has no reading r. */
+static int address_of(const op_decoder *d, const op_model *m, const op_tok *t, int r, char *out) {
+    if (t->type != TOK_WORD || t->lit || (m->param[OP_P_FLAGS] & FLAG_CJK)) return 0;
+    const char *k = d->keys + t->off;
+    const uint16_t *lit = d->lits + t->off;
+    int kn = t->len, np = 1;
+    for (int i = 0; i < kn; i++) {             /* keys: [2-9]+ (#[2-9]+)+, each # predictive */
+        if (k[i] == '#') {
+            if (lit[i] || i == 0 || i == kn - 1 || k[i - 1] == '#') return 0;
+            np++;
+        } else if (k[i] < '2' || k[i] > '9') return 0;
+    }
+    if (np < 2 || np > ADDRESS_PIECES || word_fits(d, m, t, kn, 0)) return 0;
+    if (is_qwerty(d, t)) {                      /* a word the taps fit */
+        cand qc[OP_MAX_EXACT], qcomp[OP_MAX_COMPLETIONS];
+        int n_qc;
+        if (qwerty_cands(d, m, t, 0, qc, qcomp, &n_qc) > 0) return 0;
+    }
+    addr_piece p[ADDRESS_PIECES];
+    for (int a = 0, q = 0; q < np; q++) {
+        int b = a;
+        while (b < kn && k[b] != '#') b++;
+        addr_piece *pc = &p[q];
+        pc->s = NULL; pc->id = OP_NONE; pc->a = (uint16_t)a; pc->b = (uint16_t)b;
+        int typed = 1;
+        for (int i = a; i < b; i++) if (!lit[i] && !d->hints[t->off + i]) typed = 0;
+        if (q == np - 1) {
+            pc->s = fixed_find(ADDRESS_ENDS, N_OF(ADDRESS_ENDS), k + a, b - a, lit + a);
+            if (pc->s && typed) {               /* letters typed or tapped: they spell it (a slip in "you're" isn't you.de) */
+                for (int i = a; i < b && pc->s; i++) {
+                    uint16_t l = lit[i] ? lit[i] : d->hints[t->off + i];
+                    if (l != (uint16_t)pc->s[i - a]) pc->s = NULL;
+                }
+            }
+            if (!pc->s) return 0;
+        } else if (!typed) {
+            if (q == np - 2 && q > 0 && kn - b - 1 == 2) pc->s = fixed_find(ADDRESS_SECOND, N_OF(ADDRESS_SECOND), k + a, b - a, lit + a);
+            if (!pc->s) pc->s = fixed_find(ADDRESS_WORDS, N_OF(ADDRESS_WORDS), k + a, b - a, lit + a);
+            if (!pc->s) {
+                int starts;
+                for (uint32_t i = lower_bound(m, m->key_idx, m->n_words, 0, k + a, b - a);
+                     i < m->n_words && key_cmp(m, AU16(m->key_idx, i), 0, k + a, b - a, &starts) == 0; i++) {
+                    uint16_t id = AU16(m->key_idx, i);
+                    if ((pc->id == OP_NONE || id < pc->id) && lit_match(m, id, 1, lit + a, b - a)) pc->id = id;
+                }
+                if (pc->id == OP_NONE) return 0;
+            }
+        }
+        a = b + 1;
+    }
+    int dom = np - 2, second = 0;
+    for (int i = 0; i < N_OF(ADDRESS_SECOND); i++) if (piece_is(d, m, t, &p[np - 2], ADDRESS_SECOND[i])) second = 1;
+    if (np >= 3 && strlen(p[np - 1].s) == 2 && second) dom = np - 3;
+    int has_at = dom >= 1 && !piece_is(d, m, t, &p[0], "www");
+    if (r == 1 && !has_at) return 0;
+    int at = r == 0 && has_at ? dom : -1, n = 0;
+    for (int q = 0; q < np; q++) {
+        if (q) { if (out) out[n] = q == at ? '@' : '.'; n++; }
+        n += piece_text(d, m, t, &p[q], out ? out + n : NULL);
+    }
+    return n;
+}
+#else
+static int address_of(const op_decoder *d, const op_model *m, const op_tok *t, int r, char *out) {
+    (void)d; (void)m; (void)t; (void)r; (void)out;
+    return 0;
+}
+#endif
+
+/* ---- candidates ---- */
 
 /* Learned words may hold digits (call signs). As decoder.js userKeys / userTyped: a learned
  * word's digit 2-9 is its own key and 0/1 the held digit; a typed held digit 2-9 compares as
@@ -687,7 +829,8 @@ static void join_learned(op_decoder *d) {
             if (match) {
                 memcpy(d->keys + off, k, (size_t)len);
                 memcpy(d->lits + off, lit, (size_t)len * sizeof *lit);
-                d->toks[out].type = TOK_WORD; d->toks[out].lit = 0;
+                char pre = d->toks[i].lit == '@' || d->toks[i].lit == '#' ? d->toks[i].lit : 0;
+                d->toks[out].type = TOK_WORD; d->toks[out].lit = pre;
                 d->toks[out].off = (uint16_t)off; d->toks[out].len = (uint16_t)len;
                 out++; i = j;
                 continue;
@@ -734,10 +877,11 @@ static int word_fits(const op_decoder *d, const op_model *m, const op_tok *t, in
 static int is_qwerty(const op_decoder *d, const op_tok *t);
 static int qwerty_cands(const op_decoder *d, const op_model *m, const op_tok *t, int is_last,
                         cand *out, cand *comp, int *n_comp);
+static int address_of(const op_decoder *d, const op_model *m, const op_tok *t, int r, char *out);
 static int split_elisions(op_decoder *d, const op_model *m) {
     for (int i = 0; i < d->n_toks; i++) {
         op_tok *t = &d->toks[i];
-        if (t->type != TOK_WORD) continue;
+        if (t->type != TOK_WORD || address_of(d, m, t, 0, NULL)) continue;
         const char *k = d->keys + t->off;
         int p = 0, q, cut, hyphen = 0;              /* cut: where the second word starts */
         while (p < t->len && k[p] != '#') p++;
@@ -780,6 +924,178 @@ static int split_elisions(op_decoder *d, const op_model *m) {
     }
     return OP_OK;
 }
+
+#ifndef OP_NO_CJK
+/* ---- Chinese: splitting a run of keys into words (see decoder.js segmentRuns) ---- */
+#define SEG_RUN 128             /* longest run split */
+#define SEG_BEAM 8              /* paths kept per position, one per (last word, context) */
+#define SEG_MAXLEN 16           /* longest word, in keys */
+#define SEG_CANDS 16            /* most frequent words tried per piece */
+#define SEG_PEN (-4)            /* per word, 1/4 nat */
+typedef struct { int32_t score; uint16_t prev, t; uint8_t from, fk; } seg_state;
+
+/* The n most frequent ids whose keys are exactly k[0..kn), ascending (decoder.js exactMatches). */
+static int seg_exact(const op_model *m, const char *k, int kn, uint16_t *ids, int n) {
+    int nb = 0, starts;
+    for (int strip = 0; strip < 2; strip++) {
+        OP_REF(uint16_t) ix = strip ? m->strip_idx : m->key_idx;
+        uint32_t ixn = strip ? m->n_strip : m->n_words;
+        for (uint32_t i = lower_bound(m, ix, ixn, strip, k, kn), c = 0; i < ixn && c < (uint32_t)n; i++, c++) {
+            if (key_cmp(m, AU16(ix, i), strip, k, kn, &starts) != 0) break;
+            uint16_t id = AU16(ix, i);
+            if (nb < n) ids[nb++] = id;
+            else if (id < ids[n - 1]) ids[n - 1] = id;
+            else continue;
+            for (int j = nb - 1; j > 0 && ids[j] < ids[j - 1]; j--) { uint16_t x = ids[j]; ids[j] = ids[j - 1]; ids[j - 1] = x; }
+        }
+    }
+    return nb;
+}
+/* Is word id spelled h[0..hn) (whole, or at its start if prefix)? hn letters a-z, as tapped. */
+static int seg_spelled(const op_model *m, uint16_t id, const uint16_t *h, int hn, int prefix) {
+    const char *w;
+    char wb[OP_WORD_BUF];
+    int wn = word_at(m, id, &w, wb);
+    if (wn < hn || (!prefix && wn != hn)) return 0;
+    for (int i = 0; i < hn; i++) if ((unsigned char)w[i] != h[i]) return 0;
+    return 1;
+}
+/* The n most frequent ids with keys k[0..kn) spelled h (decoder.js: exactMatches filtered). */
+static int seg_exact_spelled(const op_model *m, const char *k, int kn, const uint16_t *h, uint16_t *ids, int n) {
+    int nb = 0, starts;
+    for (int strip = 0; strip < 2; strip++) {
+        OP_REF(uint16_t) ix = strip ? m->strip_idx : m->key_idx;
+        uint32_t ixn = strip ? m->n_strip : m->n_words;
+        for (uint32_t i = lower_bound(m, ix, ixn, strip, k, kn); i < ixn; i++) {
+            if (key_cmp(m, AU16(ix, i), strip, k, kn, &starts) != 0) break;
+            uint16_t id = AU16(ix, i);
+            if (!seg_spelled(m, id, h, kn, 0)) continue;
+            if (nb < n) ids[nb++] = id;
+            else if (id < ids[n - 1]) ids[n - 1] = id;
+            else continue;
+            for (int j = nb - 1; j > 0 && ids[j] < ids[j - 1]; j--) { uint16_t x = ids[j]; ids[j] = ids[j - 1]; ids[j - 1] = x; }
+        }
+    }
+    return nb;
+}
+/* The most frequent word whose keys start with k[0..kn) and are longer (and, with h, whose
+ * letters start with h), or OP_NONE. */
+static uint16_t seg_prefix(const op_model *m, const char *k, int kn, const uint16_t *h) {
+    uint16_t best = OP_NONE;
+    int starts;
+    for (int strip = 0; strip < 2; strip++) {
+        OP_REF(uint16_t) ix = strip ? m->strip_idx : m->key_idx;
+        uint32_t ixn = strip ? m->n_strip : m->n_words;
+        for (uint32_t i = lower_bound(m, ix, ixn, strip, k, kn); i < ixn; i++) {
+            int c = key_cmp(m, AU16(ix, i), strip, k, kn, &starts);
+            if (!starts) break;
+            if (c > 0 && AU16(ix, i) < best && (!h || seg_spelled(m, AU16(ix, i), h, kn, 1))) best = AU16(ix, i);
+        }
+    }
+    return best;
+}
+static void seg_add(seg_state *a, uint8_t *n, seg_state e) {
+    int d = -1, at = 0;
+    for (int i = 0; i < *n; i++) if (a[i].prev == e.prev && a[i].t == e.t) d = i;
+    if (d >= 0) {
+        if (a[d].score >= e.score) return;
+        memmove(&a[d], &a[d + 1], (size_t)(*n - d - 1) * sizeof *a);
+        (*n)--;
+    }
+    while (at < *n && a[at].score >= e.score) at++;
+    if (at >= SEG_BEAM) return;
+    memmove(&a[at + 1], &a[at], (size_t)(*n - at - (*n == SEG_BEAM)) * sizeof *a);
+    a[at] = e;
+    if (*n < SEG_BEAM) (*n)++;
+}
+#if defined(__GNUC__)
+#define OP_NOINLINE __attribute__((noinline))
+#else
+#define OP_NOINLINE
+#endif
+/* Split token i (L predictive keys, k) into words; returns how many pieces (1: left whole). Its
+ * own function, never inlined, so its ~12 KB of state is on the stack only while it runs. */
+static OP_NOINLINE int segment_run(op_decoder *d, const op_model *m, int i, int L, uint16_t p0, int is_last) {
+    op_tok *t = &d->toks[i];
+    const char *k = d->keys + t->off;
+    int32_t pen = SEG_PEN * m->scale / 4;
+    seg_state st[SEG_RUN + 1][SEG_BEAM];
+    uint8_t ns[SEG_RUN + 1];
+    memset(ns, 0, (size_t)(L + 1));
+    st[0][0].score = 0; st[0][0].prev = p0;
+    st[0][0].t = OP_NONE; st[0][0].from = 0xFF; st[0][0].fk = 0xFF; ns[0] = 1;
+    for (int p = 0; p < L; p++) {
+        if (!ns[p]) continue;
+        uint16_t ids[SEG_MAXLEN][SEG_CANDS], pre[SEG_MAXLEN];
+        int nid[SEG_MAXLEN], maxl = L - p < SEG_MAXLEN ? L - p : SEG_MAXLEN;
+        for (int l = 1; l <= maxl; l++) {
+            const uint16_t *h = d->hints + t->off + p;      /* the letters tapped, if all were */
+            int typed = 1;
+            for (int j = 0; j < l && typed; j++) typed = h[j] >= 'a' && h[j] <= 'z';
+            nid[l - 1] = typed ? seg_exact_spelled(m, k + p, l, h, ids[l - 1], SEG_CANDS) : 0;
+            if (!nid[l - 1]) nid[l - 1] = seg_exact(m, k + p, l, ids[l - 1], SEG_CANDS);
+            pre[l - 1] = OP_NONE;
+            if (is_last && p + l == L) {
+                if (typed) pre[l - 1] = seg_prefix(m, k + p, l, h);
+                if (pre[l - 1] == OP_NONE) pre[l - 1] = seg_prefix(m, k + p, l, NULL);
+            }
+        }
+        for (int s = 0; s < ns[p]; s++) {
+            seg_state h = st[p][s];
+            for (int l = 1; l <= maxl; l++) {
+                for (int c = 0; c <= nid[l - 1]; c++) {     /* the words, then the completion */
+                    uint16_t id = c < nid[l - 1] ? ids[l - 1][c] : pre[l - 1];
+                    if (id == OP_NONE) continue;
+                    seg_state e;
+                    e.score = h.score + lp3(m, h.t, h.prev, id) + pen + (c == nid[l - 1] ? m->param[OP_P_COMPLETION] : 0);
+                    e.prev = id; e.t = tri_find(m, h.prev, id); e.from = (uint8_t)p; e.fk = (uint8_t)s;
+                    seg_add(st[p + l], &ns[p + l], e);
+                }
+            }
+        }
+    }
+    if (!ns[L]) return 1;
+    uint8_t cut[SEG_RUN + 1];                       /* each piece's start, last piece first */
+    int nc = 0;
+    for (int q = L, s = 0; st[q][s].from != 0xFF;) {
+        int q2 = st[q][s].from;
+        cut[nc++] = (uint8_t)q2;
+        s = st[q][s].fk; q = q2;
+    }
+    if (nc <= 1) return 1;
+    memmove(&d->toks[i + nc], &d->toks[i + 1], (size_t)(d->n_toks - i - 1) * sizeof *d->toks);
+    uint16_t off = t->off;
+    for (int c = 0; c < nc; c++) {
+        int a = cut[nc - 1 - c], z = c + 1 < nc ? cut[nc - 2 - c] : L;
+        op_tok *pc = &d->toks[i + c];
+        pc->type = TOK_WORD; pc->lit = 0; pc->off = (uint16_t)(off + a); pc->len = (uint16_t)(z - a);
+    }
+    d->n_toks = (uint16_t)(d->n_toks + nc - 1);
+    return nc;
+}
+static int segment_runs(op_decoder *d, const op_model *m) {
+    if (!(m->param[OP_P_FLAGS] & FLAG_CJK)) return OP_OK;
+    for (int i = 0; i < d->n_toks; i++) {
+        const op_tok *t = &d->toks[i];
+        const char *k = d->keys + t->off;
+        int L = t->type == TOK_WORD ? t->len : 0, ok = L >= 2 && L <= SEG_RUN && t->lit != '-';
+        for (int j = 0; j < L && ok; j++)
+            ok = k[j] >= '2' && k[j] <= '9' && !d->lits[t->off + j];
+        if (ok) {                                   /* a dictionary word as typed stays whole */
+            uint16_t id;
+            ok = !seg_exact(m, k, L, &id, 1);
+        }
+        if (!ok) continue;
+        int b = i - 1;
+        while (b >= 0 && d->toks[b].type == TOK_SPACE) b--;
+        uint16_t p0 = b < 0 || d->toks[b].type == TOK_PUNCT ? m->bos : OP_NONE;
+        i += segment_run(d, m, i, L, p0, i == d->n_toks - 1) - 1;
+    }
+    return OP_OK;
+}
+#else
+static int segment_runs(op_decoder *d, const op_model *m) { (void)d; (void)m; return OP_OK; }
+#endif
 
 static int punct_index(const op_model *m, char ch) {
     for (int i = 0; i < m->n_punct; i++) if (ACH(m->punct, i) == ch) return i;
@@ -1203,6 +1519,12 @@ static int slot_cands(const op_decoder *d, const op_model *m, const op_tok *t, i
         for (int i = 0; i < m->n_punct; i++) out[i] = (cand){ (uint16_t)(m->n_words + i), OP_PUNCT, 0 };
         return m->n_punct;
     }
+    if (address_of(d, m, t, 0, NULL)) {
+        out[0] = (cand){ OP_ADDRESS_ID, OP_ADDRESS, 0 };
+        if (!address_of(d, m, t, 1, NULL)) return 1;
+        out[1] = (cand){ OP_ADDRESS_ID + 1, OP_ADDRESS, ADDRESS_ALT * m->scale };
+        return 2;
+    }
     const char *k = d->keys + t->off;
     const uint16_t *lit = d->lits + t->off;
     int kn = t->len, has_lit = 0, all_lit = 1, has_hash = 0, n = 0;
@@ -1539,12 +1861,13 @@ static uint64_t resume_fp(const op_model *m, const op_start *start, const op_loc
 int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
               const op_start *start, const op_lock *locks, int n_locks) {
     if (!d || !m || !keys || beam < 1 || beam > OP_MAX_BEAM) return OP_ERR_ARG;
-    int r = tokenize(d, keys, start ? start->hint : NULL);
+    int r = tokenize(d, keys, start ? start->hint : NULL, m->param[OP_P_FLAGS] & FLAG_CJK);
     if (r) return r;
     d->layout = start && start->layout ? start->layout : DEFAULT_LAYOUT;
     d->user = start && start->user && start->user->bos == m->bos ? start->user : NULL;
     if (d->user) join_learned(d);
     if ((r = split_elisions(d, m)) != OP_OK) return r;
+    if ((r = segment_runs(d, m)) != OP_OK) return r;
     d->n_slots = 0;
     for (int i = 0; i < d->n_toks; i++) {
         if (d->toks[i].type == TOK_SPACE) continue;
@@ -1636,9 +1959,16 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
                     } else if (c[ci].kind == OP_COMPOUND) {
                         step = P[OP_P_UNKNOWN];
                         p = OP_NONE;
+                    } else if (c[ci].kind == OP_ADDRESS) {
+                        step = P[OP_P_LITERAL] + c[ci].pen;
+                        p = OP_NONE;
                     } else if (id == OP_NONE) {
                         step = c[ci].kind == OP_NUMBER ? 0 : c[ci].kind == OP_LITERAL ? P[OP_P_LITERAL] : P[OP_P_UNKNOWN];
                         p = c[ci].kind == OP_NUMBER ? (tk ? AFTER_DECIMAL : AFTER_NUMBER) : OP_NONE;
+                    } else if (t->type == TOK_WORD && t->lit && t->lit != '-') {
+                        /* a handle's word (@name) is a name: the words around it say little */
+                        step = token_score(m, d->user, OP_NONE, id, OP_NONE) + c[ci].pen + recent_bonus(d, m, id);
+                        p = OP_NONE;
                     } else {
                         step = token_score(m, d->user, prev[h], id, tri[h]) + c[ci].pen + recent_bonus(d, m, id);
                         p = id;
@@ -1652,7 +1982,8 @@ int op_decode(op_decoder *d, const op_model *m, const char *keys, int beam,
                         char ch = ACH(m->punct, id - m->n_words);
                         if (ch == '?') step += q ? P[OP_P_QQ] : P[OP_P_QN];
                         else if (ch == '.') step += P[OP_P_DB] + (q ? P[OP_P_DQ] : 0);
-                        else if (ch == ',') step += P[OP_P_CB] + (is_final ? P[OP_P_CF] : 0);
+                        else if (ch == ',') step += P[OP_P_CB] + (is_final ? P[OP_P_CF] : 0) +
+                            (!g && prev[h] < m->n_words ? P[OP_P_CS] : 0);   /* after only "k", "haha", ... (q_skip) */
                         else if (ch == '!') step += P[OP_P_EB];
                         if (ch != ',') { p = m->bos; f = 0; }
                         g = 0;
@@ -1732,7 +2063,7 @@ int op_candidates(const op_decoder *d, const op_model *m, int slot, uint16_t *id
     cand c[OP_MAX_CANDS];
     int nc = slot_cands(d, m, &d->toks[d->slot_tok[slot]], last_word, c), n = 0;
     for (int i = 0; i < nc && n < max; i++)
-        if (c[i].id != OP_NONE && c[i].id != OP_TIME_ID && c[i].kind != OP_COMPOUND) ids[n++] = c[i].id;
+        if (c[i].id != OP_NONE && c[i].id != OP_TIME_ID && c[i].kind != OP_COMPOUND && c[i].kind != OP_ADDRESS) ids[n++] = c[i].id;
     return n;
 }
 
@@ -1792,12 +2123,14 @@ static int call_sign(const char *w, int n) {
 }
 
 int op_render(const op_decoder *d, const op_model *m, const op_start *start, char *out, int cap) {
-    int n = 0, cap_next = d->ctx_cap, mark_next = 0;     /* mark_next: the inverted mark waits past "Hola," */
+    int cjk = m->param[OP_P_FLAGS] & FLAG_CJK;
+    int n = 0, cap_next = d->ctx_cap && !cjk, mark_next = 0;    /* mark_next: the inverted mark waits past "Hola," */
     uint16_t prev = d->ctx_prev;                      /* as op_decode's context */
     (void)start;
     for (int i = 0, j = 0; i < d->n_toks; i++) {
         const op_tok *t = &d->toks[i];
         if (t->type == TOK_SPACE) {
+            if (cjk) continue;
             if (n + 1 >= cap) return OP_ERR_SPACE;
             out[n++] = ' ';
             continue;
@@ -1806,7 +2139,7 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
         if (t->type == TOK_PUNCT) {
             if (n + 1 >= cap) return OP_ERR_SPACE;
             out[n++] = ch.kind == OP_LITERAL ? t->lit : ACH(m->punct, ch.id - m->n_words);
-            cap_next = out[n - 1] == '.' || out[n - 1] == '!' || out[n - 1] == '?';
+            cap_next = (out[n - 1] == '.' || out[n - 1] == '!' || out[n - 1] == '?') && !cjk;
             if (cap_next) mark_next = 0;
             prev = ch.kind == OP_LITERAL ? OP_NONE : out[n - 1] == ',' ? ch.id : m->bos;
             if (out[n - 1] == '?' && (m->param[OP_P_FLAGS] & FLAG_GREEK_Q)) out[n - 1] = ';';
@@ -1822,6 +2155,16 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
                 out[n - 1] = (char)0xD8;
                 n++;
             }
+            if (cjk) {                              /* 。 ， ？ ！ */
+                char p = out[n - 1];
+                const char *w = p == '.' ? "\xE3\x80\x82" : p == ',' ? "\xEF\xBC\x8C" : p == '?' ? "\xEF\xBC\x9F" :
+                                p == '!' ? "\xEF\xBC\x81" : NULL;
+                if (w) {
+                    if (n + 2 >= cap) return OP_ERR_SPACE;
+                    memcpy(out + n - 1, w, 3);
+                    n += 2;
+                }
+            }
             continue;
         }
         if (t->type == TOK_NUM) {
@@ -1836,6 +2179,11 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
             if (n + 1 >= cap) return OP_ERR_SPACE;
             out[n++] = '-';
         }
+        int s0 = n, pre = t->lit == '@' || t->lit == '#';
+        if (pre) {                                  /* a handle or hashtag */
+            if (n + 1 >= cap) return OP_ERR_SPACE;
+            out[n++] = t->lit;
+        }
         int s = n, len, call;
         if (ch.kind == OP_WORD || ch.kind == OP_PARTIAL) {
             const char *w, *shown, *src;
@@ -1849,7 +2197,7 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
             call = dn >= 0 ? call_sign(shown, dn) : call_sign(w, wn);
             int chars = u8_len(w, wn);
             if (ch.kind == OP_PARTIAL && chars > t->len) chars = t->len;   /* only what's typed so far */
-            if (dn >= 0) {
+            if (dn >= 0 && !(cjk && ch.kind == OP_PARTIAL)) {
                 len = ch.kind == OP_WORD ? dn : u8_prefix(shown, dn, chars);
                 src = shown;
             } else {
@@ -1867,6 +2215,13 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
             memcpy(out + n, cs[r].text, cs[r].len);
             n += cs[r].len;
             call = call_sign(out + s, n - s);
+        } else if (ch.kind == OP_ADDRESS) {
+            len = address_of(d, m, t, ch.id - OP_ADDRESS_ID, NULL);
+            if (!len) return OP_ERR_ARG;
+            if (n + len >= cap) return OP_ERR_SPACE;
+            address_of(d, m, t, ch.id - OP_ADDRESS_ID, out + n);
+            n += len;
+            call = 0;
         } else {
             /* Typed exactly, or no dictionary word fits: the exact letters, else the QWERTY
              * letters tapped, else each key's first letter. */
@@ -1886,7 +2241,7 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
         if ((m->param[OP_P_FLAGS] & FLAG_I) && len && out[s] == 'i' && (len == 1 || out[s + 1] == '\'')) out[s] = 'I';
         /* Capitalize a sentence start, but keep brand styling like iPhone / eBay. */
         int brand = len >= 2 && out[s] >= 'a' && out[s] <= 'z' && out[s + 1] >= 'A' && out[s + 1] <= 'Z';
-        if (cap_next && !brand && len) {
+        if (cap_next && !brand && len && !pre && ch.kind != OP_ADDRESS) {   /* addresses and handles as typed */
             unsigned char c0 = (unsigned char)out[s];
             if (c0 >= 'a' && c0 <= 'z') out[s] = (char)(c0 - 32);
             else if (c0 >= 0xC2 && c0 < 0xE0 && len >= 2) {        /* é -> É, ж -> Ж, α -> Α */
@@ -1918,14 +2273,14 @@ int op_render(const op_decoder *d, const op_model *m, const op_start *start, cha
             }
             if (end == '?' || end == '!') {
                 if (n + 2 >= cap) return OP_ERR_SPACE;
-                memmove(out + s + 2, out + s, (size_t)(n - s));
-                out[s] = (char)0xC2;
-                out[s + 1] = (char)(end == '?' ? 0xBF : 0xA1);
+                memmove(out + s0 + 2, out + s0, (size_t)(n - s0));
+                out[s0] = (char)0xC2;
+                out[s0 + 1] = (char)(end == '?' ? 0xBF : 0xA1);
                 n += 2;
             }
         }
         cap_next = 0;
-        prev = ch.kind == OP_WORD && ch.id < m->n_words ? ch.id : OP_NONE;
+        prev = ch.kind == OP_WORD && ch.id < m->n_words && !pre ? ch.id : OP_NONE;
     }
     if (n >= cap) return OP_ERR_SPACE;
     out[n] = 0;
@@ -2089,7 +2444,7 @@ int op_learn(op_user *u, const op_decoder *d, const op_model *m, const op_start 
             for (int k = 0; r < nc && k < cs[r].len; k++) if ((unsigned char)cs[r].text[k] >= 0x80) plain = 0;
             if (r >= nc || cs[r].len > OP_USER_WORD_LEN || !plain) { prev = OP_NONE; continue; }
             id = user_word(u, m, cs[r].text, cs[r].len);
-        } else if (ch.kind == OP_PARTIAL || id == OP_NONE) {
+        } else if (ch.kind == OP_PARTIAL || ch.kind == OP_ADDRESS || id == OP_NONE) {
             prev = OP_NONE;
             continue;
         }
