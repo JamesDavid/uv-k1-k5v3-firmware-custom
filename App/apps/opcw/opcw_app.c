@@ -18,6 +18,7 @@
 #define LOOP_MS     40u
 #define CFG_MAGIC   0xC7u
 #define TEXT_MAX    APP_OP_TEXT_MAX
+#define REG_33      0x33
 
 /* Morse with a leading 1, then the elements MSB first (0 dit, 1 dah): A-Z, 0-9. */
 static const uint8_t MORSE[36] = {
@@ -97,7 +98,10 @@ static void wait(uint16_t ms)
         if (A->get_key() == APP_KEY_EXIT) g.stop = true;
     }
 }
-static void keyOn(void) { A->tx_mute(false); if (g.carr) A->tx_carrier(true); }
+/* The red LED, as the radio lights it in TX: BK4819 GPIO out (REG_33) bit 0, set
+ * only if the read looks right (PA on); tx_end rewrites REG_33 without it. */
+static void redLed(void) { uint16_t io = A->bk_read(REG_33); if (io & 0x20u) A->bk_write(REG_33, (uint16_t)(io | 1u)); }
+static void keyOn(void) { A->tx_mute(false); if (g.carr) { A->tx_carrier(true); redLed(); } }
 static void keyOff(void) { A->tx_mute(true); if (g.carr) A->tx_carrier(false); }
 
 static void send(void)
@@ -111,6 +115,7 @@ static void send(void)
     g.done = 0;
     draw();
     A->tx_set_params();
+    redLed();
     A->tx_tone(g.tone);
     A->tx_mute(true);
     wait(LEAD_MS);
@@ -186,6 +191,6 @@ void app_main(const app_api_t *api)
     }
     c[0] = CFG_MAGIC; c[1] = g.wpm; c[2] = (uint8_t)g.tone; c[3] = (uint8_t)(g.tone >> 8); c[4] = g.carr;
     api->cfg_save(c, sizeof c);
-    const uint8_t sent = g.done == 0xFF ? 1u : 0u;  /* back to OnePress: 1 clears the message */
+    const uint8_t sent = g.done == 0xFF ? 1u : 0u;  /* back to OnePress (1: sent) */
     api->handoff("OnePress", &sent, 1);
 }

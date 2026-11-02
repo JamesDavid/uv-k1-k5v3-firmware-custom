@@ -50,13 +50,14 @@ saw, the words neither knows spelled out:
 | UP / DOWN | select the word before / after, to fix it with `*` (`* FIXES`); the rest of the message re-decodes around the fix. DOWN past the last word, typing or deleting goes back to the end |
 | F | `ABC`: spell exactly with multi-tap (call signs, names); F again: back |
 | EXIT | delete the last key; held, delete words; on an empty message, quit |
-| MENU | send: `1` APRS message, `2` CW, `3` clear |
+| MENU | send: `1` APRS message (with no message: its settings), `2` CW, `3` clear |
 | PTT | send the way you sent last time |
 
 The bottom line shows the length against the 67 characters of an APRS
 message. Call signs typed in `ABC` (`ke7aqa`) show in capitals. The message
-stays when you leave the app, until the radio is turned off; after a sender
-sends it, it is cleared.
+stays when you leave the app, until the radio is turned off, and after it is
+sent, so PTT sends it again; `MENU` `3` clears it. The apps light the red LED
+while they transmit. To read APRS traffic, use the APRS RX app.
 
 ## OP APRS
 

@@ -28,6 +28,7 @@
 #define REG_51      0x51
 #define REG_70      0x70
 #define REG_71      0x71
+#define REG_33      0x33
 #define F_MARK      12389u
 #define F_SPACE     22714u
 #define LVL         66u     /* APRS TX's default tone level: decoded first try */
@@ -41,7 +42,7 @@
 #define TAP_MS      1000u
 #define HOLD_MS     600u    /* a key held while editing: its digit */
 
-enum { ST_IDLE, ST_TX, ST_SENT, ST_DENIED, ST_NOCALL, ST_NOTO };
+enum { ST_IDLE, ST_TX, ST_SENT, ST_DENIED, ST_NOCALL, ST_NOTO, ST_NOTEXT };
 enum { ED_NONE, ED_TO, ED_CALL };
 
 static const char DEST[] = "APZOP";             /* APZ: experimental software */
@@ -97,6 +98,7 @@ static void build(void)
     g.flen = 0;
     if (!n) { g.status = ST_NOCALL; return; }
     if (!flen(TO, TO_MAX)) { g.status = ST_NOTO; return; }
+    if (!A->op_text[0]) { g.status = ST_NOTEXT; return; }
     f = addr(f, DEST, 5, 0, false);
     f = addr(f, c, n, (uint8_t)(ROUTE & 15u), path == 0);
     if (path) f = addr(f, "WIDE1", 5, 1, path == 1);
@@ -154,6 +156,9 @@ static void sendByte(uint8_t v, bool stuff)
 }
 
 static void draw(void);
+/* The red LED, as the radio lights it in TX: BK4819 GPIO out (REG_33) bit 0, set
+ * only if the read looks right (PA on); tx_end rewrites REG_33 without it. */
+static void redLed(void) { uint16_t io = A->bk_read(REG_33); if (io & 0x20u) A->bk_write(REG_33, (uint16_t)(io | 1u)); }
 static void send(void)
 {
     build();
@@ -162,6 +167,7 @@ static void send(void)
     g.status = ST_TX;
     draw();
     A->tx_set_params();
+    redLed();
     A->bk_write(REG_51, 0);                         /* no CTCSS/DCS under the AFSK */
     A->tx_tone(1200);
     g.space = 0;
@@ -218,6 +224,7 @@ static void draw(void)
     else if (g.status == ST_DENIED) o = put(o, "TX NOT ALLOWED HERE");
     else if (g.status == ST_NOCALL) o = put(o, "SET YOUR CALLSIGN: KEY 2");
     else if (g.status == ST_NOTO) o = put(o, "SET THE ADDRESSEE: KEY 1");
+    else if (g.status == ST_NOTEXT) o = put(o, "NO MESSAGE: TYPE IT FIRST");
     else if (g.status == ST_SENT) { o = put(o, "SENT "); o = putu(o, g.sent); o = put(o, "  PTT AGAIN"); }
     else o = put(o, "PTT SEND 1TO 2CALL 3SSID 4PATH");
     tiny(50, o);
@@ -293,6 +300,6 @@ void app_main(const app_api_t *api)
         api->backlight_update();
     }
     api->cfg_save(g.cfg, sizeof g.cfg);
-    const uint8_t sent = g.sent ? 1u : 0u;          /* back to OnePress: 1 clears the message */
+    const uint8_t sent = g.sent ? 1u : 0u;          /* back to OnePress (1: sent) */
     api->handoff("OnePress", &sent, 1);
 }

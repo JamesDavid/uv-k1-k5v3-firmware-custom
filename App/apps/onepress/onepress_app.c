@@ -17,10 +17,10 @@
  *            deleting goes back to the end
  *   F        ABC: spell exactly with multi-tap (call signs, names), F again back
  *   EXIT     delete; held, delete words; on an empty message, quit
- *   MENU     send: 1 APRS message, 2 CW, 3 clear
+ *   MENU     send: 1 APRS message (with no message: its settings), 2 CW, 3 clear
  *   PTT      send the way the message was last sent
- * The message survives leaving the app (until power off); a sender app hands
- * back here when it is done.
+ * The message survives leaving the app (until power off) and sending, to send
+ * it again; a sender app hands back here when it is done.
  */
 
 #include <stdint.h>
@@ -200,7 +200,7 @@ static void digit(uint8_t d)
 
 static void send(uint8_t how)
 {
-    if (!g.text[0]) return;
+    if (!g.text[0] && how != 1) return;     /* OP APRS opens empty too, for its settings */
     memcpy(A->op_text, g.text, sizeof g.text);
     g.sender = how;
     if (A->handoff(how == 1 ? APRS_APP : CW_APP, NULL, 0)) g.running = false;
@@ -227,7 +227,7 @@ static void press(uint8_t key)
     }
     else if (key == APP_KEY_F) { g.mode ^= MODE_ABC; g.tapKey = 0; }
     else if (key == APP_KEY_MENU) { g.screen = SCR_MENU; g.line[0] = 0; }
-    else if (key == APP_KEY_PTT) send(g.sender ? g.sender : 1);
+    else if (key == APP_KEY_PTT && g.text[0]) send(g.sender ? g.sender : 1);
     else if (key == APP_KEY_EXIT && !g.n) g.running = false;
 }
 
@@ -306,6 +306,13 @@ static void draw(void)
             if (j++ == want) { word = i; wend = e; break; }
             i = e;
         }
+        if (!len) {                             /* empty: the keys */
+            A->print_tiny("2-9 LETTERS, ONE PRESS EACH", 0, 12, false, true);
+            A->print_tiny("0 SPACE    1 . , ? ! '", 0, 20, false, true);
+            A->print_tiny("* NEXT GUESS   F ABC SPELL", 0, 28, false, true);
+            A->print_tiny("EXIT DELETE, EMPTY: QUIT", 0, 36, false, true);
+            A->print_tiny("MENU 1 APRS/SETUP 2 CW 3 CLEAR", 0, 44, false, true);
+        }
         for (uint8_t l = first; l < nl; l++) {
             uint8_t a = start[l], b = l + 1 < nl ? start[l + 1] : len, c = 0;
             while (a + c < b && c < COLS) { g.line[c] = g.text[a + c]; c++; }
@@ -341,8 +348,7 @@ void app_main(const app_api_t *api)
     g.ok = api->op_open() == 0;
     api->cfg_load(c, sizeof c);
     if (c[0] == CFG_MAGIC && c[1] <= 2) g.sender = c[1];
-    uint8_t sent = 0;                   /* back from a sender: 1 when it sent the message */
-    if (api->handoff_read(&sent, 1, NULL) >= 1 && sent == 1) g.keys[0] = 0;
+    api->handoff_read(NULL, 0, NULL);   /* back from a sender: the message stays, to send again */
     while (g.n < APP_OP_KEYS_MAX && g.keys[g.n]) g.n++;
     if (g.ok) decode();
     api->backlight_on();
