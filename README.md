@@ -184,6 +184,23 @@ between two tones (DTMF, FSK, Bell 202...). Both work in FM, AM and USB.
 > Transmitting apps must only be used on frequencies, power levels and modes
 > permitted by your licence and local regulations.
 
+### OnePress edition: APRS messaging
+
+This fork adds a `OnePress` edition (`./compile-firmware.sh OnePress`) that
+makes the radio an APRS messenger beside its normal voice use. Messages are
+typed with one key press per letter (the
+[OnePress](https://github.com/JamesDavid/OnePress-Keyboard) decoder picks the
+words from the whole sentence) and sent to a callsign; a resident receiver
+hears the messages to your callsign in the background, on the main screen as
+well, keeps them in flash, acknowledges them by itself, and alerts with a beep
+and a status-bar envelope. APRS RX and APRS TX show traffic and send position
+beacons; they do not send, receive or acknowledge messages, and cannot listen
+while another app or the main screen runs. Four apps go with it: OnePress, OP
+APRS, OP Inbox and OP Location. See
+[App/apps/onepress/README.md](App/apps/onepress/README.md) for why, what it
+leaves out of the firmware to fit, and how to use it. The OnePress decoder is
+PolyForm Noncommercial 1.0.0; the rest stays Apache 2.0.
+
 ### Radio and signal handling
 
 - Reworked output-power levels:

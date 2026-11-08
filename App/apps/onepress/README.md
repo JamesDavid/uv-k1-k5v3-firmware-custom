@@ -30,6 +30,55 @@ saw, the words neither knows spelled out:
 3.6% of everyday words are not among its 13,000: spell those with `ABC`.
 `onepress-s.bin` (246 KB, 5,000 words) works too, with more words to spell.
 
+## Why not APRS RX and APRS TX?
+
+The standard collection already decodes and sends APRS, but for other jobs:
+APRS RX shows the traffic on a frequency, APRS TX sends a position beacon.
+Neither sends or receives *messages*, the person-to-person part of APRS, and
+an overlay app cannot run behind another one, so nothing can listen while you
+type or talk. OnePress fills that gap, reusing their parts: the receiver is
+APRS RX's demodulator, and OP APRS keys its tones as APRS TX does.
+
+| | APRS RX + APRS TX | OnePress |
+|---|---|---|
+| Sends | a position beacon, its comment fixed in APRS Edit | messages to a callsign, typed in the app, a position after them if you like |
+| Receives | every frame, while APRS RX is open and nothing else | the messages to your callsign, in the background: in the apps and on the main screen |
+| Kept | the last 5 frames, until the app closes | the last 3 messages, in flash, over power off |
+| Acknowledgements | none | sent by itself for messages to you; heard for yours (`DELIVERED`) |
+| Replies | - | on the frequency the message came on, from the inbox, the sender filled in |
+| Alerts | - | a beep, `1 MSG` in the apps, an envelope with the count on the status bar |
+| Typing | letter by letter, in APRS Edit (the comment) | one press per letter, the sentence picks the words |
+| Voice use | the radio is busy while the app runs | normal: the receiver pauses for PTT and power save |
+
+The background part is why OnePress is a firmware edition and not only apps.
+An overlay app is loaded into the 4 KiB overlay RAM only while it runs, so the
+receiver, the inbox store, the ack sender and the decoder are resident in the
+firmware (`App/onepress`, `App/app/aprs_*.c`, API levels 4 and 5), and the
+apps are the screens on top. The sampling is timed by a hardware timer
+(TIM15 starts each ADC conversion) instead of the app's SysTick loop, so the
+radio can do other work between samples. Acks show why it has to listen all
+the time: a sender repeats a numbered message until it hears one, so a radio
+that only listens while one app is open leaves the other side repeating, and
+an ack must go out within seconds.
+
+The stock apps still install and run on this edition (to watch all the APRS
+traffic, open APRS RX). KISS TNC does messaging with a phone running APRSdroid
+on the cable; OnePress does it with the radio alone.
+
+### What the OnePress edition leaves out
+
+It is the Labs edition minus what makes room in the internal flash (128 KB)
+for the decoder and the receiver:
+
+| Left out | For |
+|---|---|
+| spectrum analyser, AirCopy, broadcast FM, Full Watch, QR codes, Rescue Ops, audio scope, boot logo | the decoder (about 21 KB) |
+| VOX, the PMR and GMRS/FRS/MURS TX lock profiles, the RX/TX log, the K-plug serial port | the receiver, inbox, acks and alerts (about 6.3 KB) |
+
+Broadcast FM, the spectrum and the audio scope remain as overlay apps (FM,
+Spectrum3D, AF Scope / AF Spectro). The word model and the inbox live in the
+external flash, not in the firmware.
+
 ## Install
 
 1. Build and flash the `OnePress` edition: `./compile-firmware.sh OnePress`. It
