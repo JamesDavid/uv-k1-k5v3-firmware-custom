@@ -5,7 +5,8 @@
  *
  * Keys: UP/DOWN the next / previous message · MENU or PTT reply: OnePress,
  *   with the sender as the addressee of OP APRS · EXIT back to OnePress (or to
- *   the menu when started from it).
+ *   the menu when started from it) · * the receiver's diagnostics line on/off
+ *   (saved).
  * The receiver keeps listening while this app is open (API level 5).
  */
 
@@ -23,6 +24,7 @@ static struct {
     uint32_t statAt, statSamples;
     app_rx_stats_t st;
     uint16_t rate;
+    uint8_t diag;           /* the diagnostics line shown (cfg: 1 on; erased 0xFF: off) */
     char str[34];
 } g;
 #define A (g.api)
@@ -73,6 +75,7 @@ static void draw(void)
     tiny(38, o);
     /* the receiver at work: samples a second (9600), packets from anyone, the
      * audio's lowest-highest code, the battery code */
+    if (g.diag == 1u) {
     o = A->append_u32(g.str, g.rate);
     o = put(o, "/S ");
     o = A->append_u32(o, g.st.frames);
@@ -84,6 +87,7 @@ static void draw(void)
     o = A->append_u32(o, g.st.battery);
     if (g.st.state == 2u) o = put(o, " P");
     tiny(44, o);
+    }
     A->blit_status();
     A->blit_full();
 }
@@ -105,6 +109,8 @@ static void keys(void)
         uint8_t n = 0;
         while (from[n]) n++;
         if (A->handoff("OnePress", from, (uint8_t)(n + 1u))) g.running = false;
+    } else if (key == APP_KEY_STAR) {
+        g.diag = g.diag == 1u ? 0u : 1u;
     } else if (d && g.count) {
         g.cur = (uint8_t)(d > 0 ? (g.cur + 1u < g.count ? g.cur + 1u : 0u) : (g.cur ? g.cur - 1u : g.count - 1u));
     }
@@ -117,6 +123,7 @@ void app_main(const app_api_t *api)
     g.api = api;
     g.prevKey = APP_KEY_INVALID;
     g.fromOnePress = api->handoff_read(NULL, 0, from) >= 0 && from[0] == 'O' && from[1] == 'n';
+    api->cfg_load(&g.diag, 1);
     api->backlight_on();
     g.running = true;
     g.redraw = true;
@@ -134,11 +141,12 @@ void app_main(const app_api_t *api)
             g.rate = (uint16_t)((g.st.samples - g.statSamples) * 1000u / (now - g.statAt));
             g.statSamples = g.st.samples;
             g.statAt = now;
-            g.redraw = true;
+            g.redraw |= g.diag == 1u;
         }
         if (g.redraw) { g.redraw = false; draw(); g.unread = api->rx_unread(); }
         api->battery_sample();
         api->delay_ms(LOOP_MS);
         api->backlight_update();
     }
+    api->cfg_save(&g.diag, 1);
 }
