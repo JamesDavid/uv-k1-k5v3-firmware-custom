@@ -1,8 +1,9 @@
 /*
  * OP APRS - sends the message typed in OnePress as an APRS message (AX.25 UI
- * frame, Bell 202 AFSK 1200 bauds) on the TX VFO: "SRC>APZOP,path::TO       :text".
- * No message number, so no acknowledgement is expected (this app does not
- * receive). APRS-IS iGates forward it to aprs.fi and to the addressee.
+ * frame, Bell 202 AFSK 1200 bauds) on the TX VFO: "SRC>APZOP,path::TO       :text{12".
+ * The number (the resident receiver's, the same one when the same message is
+ * sent again) asks for an ack: the receiver hears it, and the bottom line says
+ * DELIVERED. APRS-IS iGates forward it to aprs.fi and to the addressee.
  *
  * The AX.25 frame, its FCS and the AFSK keying (the BK4829 tone generator's
  * frequency rewritten at each NRZI transition, bits timed from SysTick) are
@@ -41,7 +42,7 @@
 #define TEXT_MAX    67u     /* APRS message text */
 #define CALL_MAX    6u
 #define TO_MAX      9u
-#define FRAME_MAX   (7u * 4u + 2u + 11u + TEXT_MAX + 2u)
+#define FRAME_MAX   (7u * 4u + 2u + 11u + TEXT_MAX + 3u + 2u)   /* "{12" */
 #define LOOP_MS     40u
 #define TAP_MS      1000u
 #define HOLD_MS     600u    /* a key held while editing: its digit */
@@ -55,7 +56,7 @@ static const char *const TAPS[10] = { "0", "1-", "ABC2", "DEF3", "GHI4", "JKL5",
 
 static struct {
     const app_api_t *api;
-    uint8_t flen, prevKey, space, ones, status, edit, tapKey, tapAt, sent;
+    uint8_t flen, prevKey, space, ones, status, edit, tapKey, tapAt, sent, id, delivered;
     bool running, redraw;
     uint32_t tPrev, tCyc, next, tapMs, downAt;
     bool held;
@@ -114,6 +115,13 @@ static void build(void)
     const char *t = A->op_text;
     for (uint8_t i = 0; i < TEXT_MAX && t[i]; i++)  /* | ~ { are not allowed in a message */
         *f++ = (uint8_t)(t[i] == '|' || t[i] == '~' || t[i] == '{' ? ' ' : t[i] < ' ' || t[i] > '~' ? '?' : t[i]);
+    char to[TO_MAX + 1];
+    memcpy(to, TO, TO_MAX);
+    to[flen(TO, TO_MAX)] = 0;
+    g.id = A->rx_msgid(to, t);                      /* the same again for a repeat */
+    *f++ = '{';
+    if (g.id >= 10u) *f++ = (uint8_t)('0' + g.id / 10u);
+    *f++ = (uint8_t)('0' + g.id % 10u);
     uint8_t k = (uint8_t)(f - g.frm);
     uint16_t crc = 0xFFFFu;                         /* CRC-16/X.25 */
     for (uint8_t i = 0; i < k; i++) {
@@ -187,6 +195,7 @@ static void send(void)
     A->tx_end();
     if (g.sent < 99u) g.sent++;
     g.status = ST_SENT;
+    g.delivered = A->rx_delivered();
 }
 
 /* ---- display ---- */
@@ -229,7 +238,8 @@ static void draw(void)
     else if (g.status == ST_NOCALL) o = put(o, "SET YOUR CALLSIGN: KEY 2");
     else if (g.status == ST_NOTO) o = put(o, "SET THE ADDRESSEE: KEY 1");
     else if (g.status == ST_NOTEXT) o = put(o, "NO MESSAGE: TYPE IT FIRST");
-    else if (g.status == ST_SENT) { o = put(o, "SENT "); o = putu(o, g.sent); o = put(o, "  PTT AGAIN"); }
+    else if (g.status == ST_SENT && g.delivered) o = put(o, g.delivered == 1u ? "DELIVERED" : "REJECTED");
+    else if (g.status == ST_SENT) { o = put(o, "SENT "); o = putu(o, g.sent); o = put(o, " NO ACK YET  PTT AGAIN"); }
     else o = put(o, "PTT SEND 1TO 2CALL 3SSID 4PATH");
     tiny(50, o);
     A->blit_status();
@@ -260,7 +270,7 @@ static void listen(void)
     char c[12];
     uint8_t n = myCall(c);
     c[n] = 0;
-    if (n) A->rx_start(c, (uint8_t)(ROUTE & 15u));
+    if (n) A->rx_start(c, (uint8_t)(ROUTE & 0x3Fu));   /* SSID, and the path for its acks */
 }
 
 static void keys(void)
@@ -310,6 +320,7 @@ void app_main(const app_api_t *api)
     g.redraw = true;
     while (g.running) {
         keys();
+        if (g.status == ST_SENT && A->rx_delivered() != g.delivered) { g.delivered = A->rx_delivered(); g.redraw = true; }
         if (g.redraw) { g.redraw = false; draw(); }
         api->battery_sample();
         api->delay_ms(LOOP_MS);
