@@ -2,15 +2,19 @@
 
 `OnePress` types a message on the keypad with one press per letter, and the
 whole sentence picks the words: `4663` is "good", "home" or "gone", and the
-words around it say which. Two sender apps put the message on the air:
+words around it say which. Two sender apps put the message on the air, and
+the radio listens for answers while you type:
 
 - `OP APRS` sends it as an APRS message to a callsign (Bell 202 AFSK, as APRS TX);
-- `OP CW` sends it in Morse, as a tone over FM (MCW) or with the carrier keyed.
+- `OP CW` sends it in Morse, as a tone over FM (MCW) or with the carrier keyed;
+- `OP Inbox` shows the APRS messages to your callsign that the radio heard in
+  the background while these apps were open, and replies to them.
 
 The decoder is [OnePress](https://github.com/JamesDavid/OnePress-Keyboard)
 (`App/onepress`, PolyForm Noncommercial 1.0.0: the OnePress edition is for
 noncommercial use). It stays resident and serves the apps through API level 4
-(`APP_CAP_ONEPRESS`); its word model, 13,000 words including CQ, QTH, QSO, tnx,
+(`APP_CAP_ONEPRESS`), with the APRS message receiver at level 5
+(`APP_CAP_APRS_INBOX`); its word model, 13,000 words including CQ, QTH, QSO, tnx,
 repeater, node and the like (`onepress-r.bin`, 491 KB), sits in external flash
 at 0x162000. Against a classic one-word-at-a-time predictive keypad with the
 same words (`tests/baseline.js` in the OnePress repository), on text it never
@@ -30,9 +34,14 @@ saw, the words neither knows spelled out:
 1. Build and flash the `OnePress` edition: `./compile-firmware.sh OnePress`. It
    is Labs without the spectrum analyser, AirCopy, broadcast FM, Full Watch,
    QR codes, Rescue Ops, the audio scope and the boot logo, which make room
-   for the decoder. Put it in a Multiboot slot to keep your usual edition.
-2. Build the apps, `./compile-app.sh onepress opaprs opcw`, and install
-   `OnePress.app`, `OPAPRS.app` and `OPCW.app` with UV Studio.
+   for the decoder; and without VOX, the PMR and GMRS/FRS/MURS TX lock
+   profiles, the RX/TX log and the K-plug serial port, which make room for the
+   receiver. After flashing it over another edition, check `F Lock` (hidden
+   menu): profiles after `438` moved up two places. Put it in a Multiboot slot
+   to keep your usual edition.
+2. Build the apps, `./compile-app.sh onepress opaprs opcw opinbox`, and install
+   `OnePress.app`, `OPAPRS.app`, `OPCW.app` and `OPInbox.app` with UV Studio.
+   Reinstall them all after flashing a new firmware.
 3. Upload the model over the USB-C cable, from the main screen:
    `python tools/onepress_upload.py COM5 onepress-r.bin` (`pip install pyserial`;
    the model is in the OnePress repository's `model/` folder). Uploading again
@@ -50,24 +59,51 @@ saw, the words neither knows spelled out:
 | UP / DOWN | select the word before / after, to fix it with `*` (`* FIXES`); the rest of the message re-decodes around the fix. DOWN past the last word, typing or deleting goes back to the end |
 | F | `ABC`: spell exactly with multi-tap (call signs, names); F again: back |
 | EXIT | delete the last key; held, delete words; on an empty message, quit |
-| MENU | send: `1` APRS message (with no message: its settings), `2` CW, `3` clear |
+| MENU | `1` APRS message (with no message: its settings), `2` CW, `3` clear, `4` inbox |
 | PTT | send the way you sent last time |
 
 The bottom line shows the length against the 67 characters of an APRS
 message. Call signs typed in `ABC` (`ke7aqa`) show in capitals. The message
 stays when you leave the app, until the radio is turned off, and after it is
-sent, so PTT sends it again; `MENU` `3` clears it. The apps light the red LED
-while they transmit. To read APRS traffic, use the APRS RX app.
+sent, so PTT sends it again; `MENU` `3` clears it. To leave the apps: `MENU`
+`3`, then `EXIT`. The apps light the red LED while they transmit.
 
-## OP APRS
+## Receiving APRS messages
 
-`SRC-SSID>APZOP,path::ADDRESSEE:text`, with no message number (this app does not
-receive, so it asks for no acknowledgement). iGates forward it to APRS-IS, so
-the addressee sees it on aprs.fi or in an APRS app too.
+While OnePress, OP APRS, OP CW or OP Inbox is open, the radio decodes APRS on
+the RX VFO in the background and keeps the messages addressed to your callsign
+and SSID set in OP APRS (`KE7AQA-7`), or to the bare callsign (`KE7AQA`). A
+new one beeps and shows `1 MSG` at the top of OnePress; `MENU` `4` reads it.
+The last 3 are kept in external flash (the sector after the word model), read
+or not, so they are still there after the radio is turned off. The speaker
+stays off; the receiver stops on the main screen and while an app transmits.
+To read all APRS traffic, use the APRS RX app.
+
+## OP Inbox
 
 | Key | Action |
 |---|---|
-| PTT or MENU | send |
+| UP / DOWN | the next / previous message (newest first) |
+| MENU or PTT | reply: back to OnePress, with the sender as OP APRS's addressee |
+| `*` | the receiver's diagnostics line on / off |
+| EXIT | back to OnePress |
+
+The line under the messages says whom the radio listens for. The diagnostics
+line, `9600/S 12PKT A1850-2250 B2010`, gives the audio samples taken a second
+(about 9600), the packets decoded from any station since the start, the audio's
+lowest and highest ADC code over the last second (mid-scale 2048: a strong
+signal changes it), and the battery's ADC code. If messages do not arrive,
+check that the radio hears the sender on the main screen first.
+
+## OP APRS
+
+`SRC-SSID>APZOP,path::ADDRESSEE:text`, with no message number. iGates forward
+it to APRS-IS, so the addressee sees it on aprs.fi or in an APRS app too. The
+callsign and SSID set here are also the ones the receiver listens for.
+
+| Key | Action |
+|---|---|
+| PTT | send (only PTT: a MENU pressed once too often must not transmit) |
 | 1 | edit the addressee |
 | 2 | edit your callsign (empty: the one in the boot message) |
 | 3 / 4 | SSID / path: `DIRECT`, `WIDE1-1`, `WIDE1-1,WIDE2-1` |
@@ -94,11 +130,15 @@ receivers decoded first try.
 
 ## Testing on a PC
 
-`tools/onepress_sim/build.sh` builds `build/opsim`, which runs the three apps
+`tools/onepress_sim/build.sh` builds `build/opsim`, which runs the four apps
 against a simulated radio: the real resident service and decoder, the model
 file as the external flash, keys from a script, the screen as text, and every
 APRS transmission decoded back from its tones, FCS checked. For example
 `build/opsim onepress-r.bin "6 6 0 6 9 0 9 2 9 0 4 6 6 3 s"` shows "On my way home".
+A third argument, `audio.u16@seconds` (`tools/aprs_rx_test/gen.py`), is RX
+audio the background receiver hears from that time on. `tools/aprs_rx_test`
+also tests the decoder on recorded traffic (`rxtest`) and the inbox in flash,
+power cuts included (`storetest`).
 
 ## Resources
 
@@ -106,4 +146,11 @@ The decoder takes about 21 KB of flash and 2.1 KB of RAM (1.6 KB of working
 memory, a 256-byte read cache, the model's table), plus up to 2.5 KB of stack
 while it decodes; `System Info` shows the stack margin left. A key press reads
 the model about 2,000 times (32 bytes each, about 16 us at 24 MHz) with the cache. The apps fit the
-4 KiB overlay: OnePress 3.2 KB, OP APRS 2.7 KB, OP CW 1.5 KB.
+4 KiB overlay: OnePress 3.9 KB, OP APRS 2.9 KB, OP CW 1.5 KB, OP Inbox 1.5 KB.
+
+The receiver (`App/onepress/aprs_rx.c`, the APRS RX app's demodulator, and
+`App/app/aprs_bg.c`, with the inbox store `App/app/aprs_store.c`) takes about
+3.1 KB of flash and 0.9 KB of RAM. TIM15
+starts each ADC conversion of the RX audio, 9600 a second, so the samples stay
+evenly spaced however late the interrupt runs; the interrupt uses about 8% of
+the CPU.
