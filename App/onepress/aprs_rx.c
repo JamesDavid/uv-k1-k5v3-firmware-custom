@@ -57,10 +57,11 @@ static uint8_t nInbox;
 static char me[10], meBase[10];          /* addressees matched: "CALL-SSID", "CALL", padded to 9 */
 static aprs_msg_t pend;                  /* a message to this station, for aprs_rx_poll */
 static volatile uint8_t pendFull, pendBase;   /* pendBase: sent to CALL, not CALL-SSID */
-static struct { char to[10], id[6], as[10]; bool due; } ack;   /* the ack to send */
+static struct { char to[10], id[6], as[10]; uint32_t freq; bool due; } ack;   /* the ack to send */
 static uint8_t msgId, msgHash, delivered;     /* the last number given, its text's hash */
 static volatile uint8_t heard;                /* a heard ack (1) or rej (2) for msgId, from the interrupt */
 uint16_t aprs_rx_frames;
+uint32_t aprs_rx_freq;
 
 static uint8_t putCall(char *o, const char *call, uint8_t ssid)
 {
@@ -102,11 +103,13 @@ aprs_msg_t *aprs_rx_poll(void)
 {
     aprs_msg_t *m = 0;
     if (!pendFull) return 0;
+    pend.freq = aprs_rx_freq;
     if (pend.id[0]) {                    /* numbered: ack it, a repeat too */
         memcpy(ack.to, pend.from, sizeof ack.to);
         memcpy(ack.id, pend.id, sizeof ack.id);
         memcpy(ack.as, pendBase ? meBase : me, sizeof ack.as);
         for (uint8_t i = 9; i && ack.as[i - 1] == ' '; i--) ack.as[i - 1] = 0;
+        ack.freq = pend.freq;
         ack.due = true;
     }
     if (!nInbox || strcmp(inbox[0].from, pend.from) || strcmp(inbox[0].text, pend.text)) {
@@ -118,9 +121,10 @@ aprs_msg_t *aprs_rx_poll(void)
     return m;
 }
 
-bool aprs_rx_ack_due(char *to, char *id, char *as)
+bool aprs_rx_ack_due(char *to, char *id, char *as, uint32_t *freq)
 {
     if (!ack.due) return false;
+    *freq = ack.freq;
     memcpy(to, ack.to, sizeof ack.to);
     memcpy(id, ack.id, sizeof ack.id);
     memcpy(as, ack.as, sizeof ack.as);

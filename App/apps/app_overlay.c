@@ -903,9 +903,23 @@ void APP_AfCaptureResumeAdc(void)
 }
 
 /* ---- v2 TX (beacon) ---- */
+/* tx_freq_set: the frequency of a reply, swapped into the VFO only while the
+ * TX is set up (RADIO_SetTxParametersEx tunes gCurrentVfo->pTX). */
+static uint32_t app_tx_override;
+static uint32_t app_tx_freq(void)        { return app_tx_override ? app_tx_override : gTxVfo->pTX->Frequency; }
+#ifdef ENABLE_FEAT_ONEPRESS
+static void     app_tx_freq_set(uint32_t f) { app_tx_override = f; }
+#endif
+static void app_tx_tuned(void (*setup)(void))
+{
+    const uint32_t vfo = gCurrentVfo->pTX->Frequency;
+    if (app_tx_override) gCurrentVfo->pTX->Frequency = app_tx_override;
+    setup();
+    gCurrentVfo->pTX->Frequency = vfo;
+}
 static uint8_t app_tx_state(void)
 {
-    if (TX_freq_check(gTxVfo->pTX->Frequency) != 0 && gTxVfo->TX_LOCK) return 1; /* TX disable */
+    if (TX_freq_check(app_tx_freq()) != 0 && gTxVfo->TX_LOCK) return 1; /* TX disable */
     if (gBatteryDisplayLevel == 0) return 2;  /* battery low */
     if (gBatteryDisplayLevel > 6)  return 3;  /* voltage high */
     if (gTxVfo->Modulation != MODULATION_FM) return 1;
@@ -916,10 +930,9 @@ static void     app_tx_mute(bool on)     { if (on) BK4819_EnterTxMute(); else BK
 static void     app_tx_end(void)         { BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false); RADIO_SetupRegisters(true); APRS_BG_Resume(); }
 /* The background receiver stops for a transmission: nothing to hear, and its
  * interrupt would jitter the app's keying. */
-static void     app_tx_set_params(void)  { APRS_BG_Pause(); RADIO_SetTxParameters(); }
-static void     app_tx_prepare(void)     { APRS_BG_Pause(); RADIO_PrepareTx(); }
+static void     app_tx_set_params(void)  { APRS_BG_Pause(); app_tx_tuned(RADIO_SetTxParameters); }
+static void     app_tx_prepare(void)     { APRS_BG_Pause(); app_tx_tuned(RADIO_PrepareTx); }
 static void     app_tx_carrier(bool on)  { BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, on); }
-static uint32_t app_tx_freq(void)        { return gTxVfo->pTX->Frequency; }
 static void app_boot_callsign(char *buf, uint8_t len)
 {
     char raw[12]; uint8_t n = 0;
@@ -1362,6 +1375,7 @@ static const app_api_t app_api = {
     .rx_stats            = APRS_BG_Stats,
     .rx_msgid            = APRS_BG_MsgId,
     .rx_delivered        = APRS_BG_Delivered,
+    .tx_freq_set         = app_tx_freq_set,
 #endif
 };
 
@@ -1471,6 +1485,7 @@ static uint8_t app_launch(uint8_t slot)
     app_entry_t entry = (app_entry_t)(((uint32_t)ws + h.entry_off) | 1u);
     app_cyc_base = APP_CYC_DIAGNOSTIC_START - app_cycles_raw();
     entry(&app_api);
+    app_tx_override = 0;               /* a reply's frequency ends with its app */
 
     /* A capture the app left open must not keep PA4 and the DAC. */
     app_af_capture_close();

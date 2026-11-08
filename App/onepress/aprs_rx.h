@@ -25,6 +25,8 @@ typedef struct {
     char    text[APRS_RX_TEXT + 1];
     char    id[6];              /* message number ("{12"), "" for none: no ack  */
     uint8_t unread;
+    uint8_t pad[3];
+    uint32_t freq;              /* heard on (10 Hz units, aprs_rx_freq), 0: unknown */
 } aprs_msg_t;
 
 /* This station's callsign and SSID: messages to "CALL-SSID" or "CALL" are
@@ -45,6 +47,8 @@ aprs_msg_t *aprs_rx_msg(uint8_t n);
 uint8_t aprs_rx_unread(void);
 /* Frames with a good FCS seen, for any station (a test and debug count). */
 extern uint16_t aprs_rx_frames;
+/* The frequency listened on, set by the platform: messages and acks carry it. */
+extern uint32_t aprs_rx_freq;
 
 /* ---- acknowledgements ----
  * A message to this station with a number ("{12") asks for an ack, every time
@@ -53,7 +57,7 @@ extern uint16_t aprs_rx_frames;
  * the addressee it was sent to, CALL-SSID or CALL: the ack comes from that).
  * "ack12" / "rej12" to this station answer a message sent with
  * aprs_rx_msgid's number: aprs_rx_delivered tells. */
-bool aprs_rx_ack_due(char *to, char *id, char *as);   /* 10, 6, 10 bytes */
+bool aprs_rx_ack_due(char *to, char *id, char *as, uint32_t *freq);   /* 10, 6, 10 bytes */
 /* The number to send text to `to` with, "1".."99" as 1..99: the last one again
  * for the same addressee and text (a repeat), else the next. Starts after seed. */
 uint8_t aprs_rx_msgid(const char *to, const char *text);

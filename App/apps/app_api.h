@@ -57,7 +57,7 @@
  *      op_guesses, op_choice, op_word and the op_keys / op_text buffers
  *   5  background APRS message receiver (APP_CAP_APRS_INBOX): rx_start,
  *      rx_station, rx_count, rx_msg, rx_unread, rx_stats, rx_msgid,
- *      rx_delivered (acks) */
+ *      rx_delivered (acks), tx_freq_set */
 #define APP_ABI_MAJOR  1u
 #define APP_API_LEVEL  5u
 
@@ -176,6 +176,8 @@ typedef struct {
     char    text[APP_RX_TEXT_MAX + 1];
     char    id[6];                      /* its message number, "" for none */
     uint8_t unread;
+    uint8_t pad[3];
+    uint32_t freq;                      /* heard on (x10 Hz), 0: unknown */
 } app_rx_msg_t;
 
 /* The receiver at work (rx_stats): for a diagnostics line. */
@@ -538,6 +540,10 @@ typedef struct app_api {
      * number given: 0 waiting, 1 acked, 2 rejected. */
     uint8_t  (*rx_msgid)(const char *to, const char *text);
     uint8_t  (*rx_delivered)(void);
+    /* Transmit on f (x10 Hz) instead of the TX VFO's frequency, simplex, until
+     * the app exits or sets 0 (a reply where the message was heard): tx_freq,
+     * tx_state and the tx_* sequence use it; the VFO is not changed. */
+    void     (*tx_freq_set)(uint32_t f);
 } app_api_t;
 
 /* Serial ports and serial_ctl state bits (API level 3). */
@@ -562,7 +568,7 @@ _Static_assert(offsetof(app_api_t, handoff) == 356u &&
                offsetof(app_api_t, vfo_stage) == 392u &&
                offsetof(app_api_t, op_open) == 396u &&
                offsetof(app_api_t, rx_start) == 428u &&
-               sizeof(app_api_t) == 460u,
+               sizeof(app_api_t) == 464u,
                "app_api_t is append-only: every edition shares this layout");
 #endif
 

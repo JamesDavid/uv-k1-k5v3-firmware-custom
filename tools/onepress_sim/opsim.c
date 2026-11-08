@@ -13,7 +13,7 @@
  *
  * Keys, separated by spaces: 0-9 * F M (MENU) X (EXIT) U D (up, down) P (PTT),
  * each pressed for 80 ms, or held with :ms (6:700); w:ms waits; s prints the
- * screen. Build: tools/onepress_sim/build.sh.
+ * screen; v:freq tunes the VFO there (x10 Hz, 14652000). Build: tools/onepress_sim/build.sh.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -124,6 +124,9 @@ static uint32_t audio_at;                   /* ms */
 static int rx_state;                        /* 0 off, 1 running, 2 paused (TX) */
 static char rx_call[7];
 static uint8_t rx_ssid;
+static uint32_t vfo_freq = 14439000, tx_override;
+static struct { uint32_t at, freq; } vfo_set[8];
+static int n_vfo_set;
 static void rx_feed(void)
 {
     long upto = now_ms() < audio_at ? 0 : (long)((uint64_t)(now_ms() - audio_at) * 96 / 10);
@@ -138,6 +141,7 @@ static void rx_start(const char *call, uint8_t ssid)
     rx_feed();
     if (memcmp(c, rx_call, 7) || (ssid & 15) != (rx_ssid & 15)) { aprs_rx_init(c, ssid & 15); memcpy(rx_call, c, 7); }
     rx_ssid = ssid;
+    aprs_rx_freq = vfo_freq;
     if (!rx_state) printf("  [RX listening for %s-%u]\n", rx_call, rx_ssid & 15);
     rx_state = 1;
 }
@@ -153,26 +157,39 @@ static uint8_t rx_msgid(const char *to, const char *text) { return aprs_rx_msgid
 static uint8_t rx_delivered(void) { rx_feed(); return aprs_rx_delivered(); }
 /* As APRS_BG_Service: an ack due goes out 1.5 s later (the resident AFSK is the
  * firmware's; its frame, built by the same aprs_tx_frame, is printed). */
-static struct { char to[10], id[6], as[10]; uint32_t at; int pending; } ackq;
+static struct { char to[10], id[6], as[10]; uint32_t at, freq; int pending; } ackq;
 static void service(void)
 {
     if (rx_state != 1) return;
     rx_feed();
     aprs_rx_poll();
-    if (aprs_rx_ack_due(ackq.to, ackq.id, ackq.as)) { ackq.at = now_ms() + 1500; ackq.pending = 1; }
+    if (aprs_rx_ack_due(ackq.to, ackq.id, ackq.as, &ackq.freq)) { ackq.at = now_ms() + 1500; ackq.pending = 1; }
     if (!ackq.pending || now_ms() < ackq.at) return;
     if (aprs_rx_busy()) { ackq.at = now_ms() + 300; return; }
     ackq.pending = 0;
     uint8_t f[APRS_TX_FRAME_MAX];
     char text[10] = "ack";
     memcpy(text + 3, ackq.id, 6);
+    printf("  [ACK on %u.%05u]\n", ackq.freq / 100000, ackq.freq % 100000);
     print_frame("ACK sent", f, aprs_tx_frame(f, ackq.as, (rx_ssid >> 4) & 3, ackq.to, text));
 }
-static void delay_ms(uint32_t ms) { service(); cyc += (uint64_t)ms * 48000u; rx_feed(); blit(); if (now_ms() > script_end) longjmp(done, 1); }
+static void delay_ms(uint32_t ms)
+{
+    for (int i = 0; i < n_vfo_set; i++)
+        if (vfo_set[i].at && now_ms() >= vfo_set[i].at) {
+            vfo_freq = vfo_set[i].freq;
+            vfo_set[i].at = 0;
+            aprs_rx_freq = vfo_freq;
+            printf("  [VFO now %u.%05u]\n", vfo_freq / 100000, vfo_freq % 100000);
+        }
+    service(); cyc += (uint64_t)ms * 48000u; rx_feed(); blit(); if (now_ms() > script_end) longjmp(done, 1); }
 static void nothing(void) {}
 static void nothing_b(bool b) { (void)b; }
 static void draw_frequency(uint32_t f, uint8_t x, uint8_t line) { char s[20]; snprintf(s, sizeof s, "%u.%05u", f / 100000, f % 100000); add_row(line, x, s); }
-static uint32_t tx_freq(void) { return 14439000; }
+/* The VFO: 144.390, or OPSIM_VFO (x10 Hz) to stand for a VFO changed after a
+ * message was heard there; tx_freq_set overrides it until the app exits. */
+static uint32_t tx_freq(void) { return tx_override ? tx_override : vfo_freq; }
+static void tx_freq_set(uint32_t f) { tx_override = f; }
 static uint32_t ticks_ms(void) { return now_ms() / 10 * 10; }
 static char *append_u32(char *o, uint32_t v) { return o + sprintf(o, "%u", v); }
 static char *append_i32(char *o, int32_t v) { return o + sprintf(o, "%d", v); }
@@ -217,7 +234,7 @@ static void bk_write(uint8_t reg, uint16_t v)
 }
 static uint16_t bk_read(uint8_t r) { (void)r; return 0; }
 static uint8_t tx_state(void) { return 0; }
-static void tx_set_params(void) { rx_feed(); if (rx_state == 1) rx_state = 2; tx_on = 1; n_tones = 0; tone_freq = 0; printf("  [TX on 144.390]\n"); }
+static void tx_set_params(void) { rx_feed(); if (rx_state == 1) rx_state = 2; tx_on = 1; n_tones = 0; tone_freq = 0; printf("  [TX on %u.%05u]\n", tx_freq() / 100000, tx_freq() % 100000); }
 static void tx_tone(uint16_t hz) { (void)hz; }
 static int keyed, morse_on;
 static uint64_t key_since, key_off_at;
@@ -315,7 +332,7 @@ static app_api_t api = {
     .op_open = OP_Open, .op_decode = OP_Decode, .op_render = OP_Render, .op_guesses = OP_Guesses,
     .op_choice = OP_Choice, .op_word = OP_Word, .op_keys = gOpKeys, .op_text = gOpText,
     .play_tone = play_tone, .rx_start = rx_start, .rx_station = rx_station, .rx_count = rx_count,
-    .rx_msg = rx_msg, .rx_unread = rx_unread, .rx_stats = rx_stats, .rx_msgid = rx_msgid, .rx_delivered = rx_delivered,
+    .rx_msg = rx_msg, .rx_unread = rx_unread, .rx_stats = rx_stats, .rx_msgid = rx_msgid, .rx_delivered = rx_delivered, .tx_freq_set = tx_freq_set,
 };
 
 int main(int argc, char **argv)
@@ -346,6 +363,7 @@ int main(int argc, char **argv)
         uint32_t ms = c ? (uint32_t)atoi(c + 1) : 80;
         if (tok[0] == 'w') { t += ms; continue; }
         if (tok[0] == 's') { screen_at[n_screens++] = t; continue; }
+        if (tok[0] == 'v' && c && n_vfo_set < 8) { vfo_set[n_vfo_set].at = t; vfo_set[n_vfo_set++].freq = (uint32_t)atol(c + 1); continue; }
         uint8_t k = tok[0] >= '0' && tok[0] <= '9' ? (uint8_t)(tok[0] - '0') : tok[0] == '*' ? APP_KEY_STAR :
                     tok[0] == 'F' ? APP_KEY_F : tok[0] == 'M' ? APP_KEY_MENU : tok[0] == 'X' ? APP_KEY_EXIT :
                     tok[0] == 'U' ? APP_KEY_UP : tok[0] == 'D' ? APP_KEY_DOWN : tok[0] == 'P' ? APP_KEY_PTT : APP_KEY_INVALID;
@@ -361,6 +379,7 @@ int main(int argc, char **argv)
         printf("== %s\n", names[running_app]);
         unsigned long r0 = flash_reads;
         apps[running_app](&api);
+        tx_override = 0;                     /* as the loader: a reply's frequency ends with its app */
         printf("== %s returned (%lu flash reads)\n", names[running_app], flash_reads - r0);
         if (!handoff_pending || now_ms() >= script_end) { if (rx_state) printf("  [RX off: back to the radio]\n"); rx_state = 0; break; }
         handoff_pending = 0;

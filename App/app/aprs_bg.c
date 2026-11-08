@@ -28,6 +28,7 @@
 #include "scheduler.h"
 
 _Static_assert(sizeof(app_rx_msg_t) == sizeof(aprs_msg_t) && APP_RX_TEXT_MAX == APRS_RX_TEXT &&
+               offsetof(app_rx_msg_t, freq) == offsetof(aprs_msg_t, freq) &&
                offsetof(app_rx_msg_t, text) == offsetof(aprs_msg_t, text) &&
                offsetof(app_rx_msg_t, id) == offsetof(aprs_msg_t, id) &&
                offsetof(app_rx_msg_t, unread) == offsetof(aprs_msg_t, unread), "app_rx_msg_t mirrors aprs_msg_t");
@@ -59,7 +60,7 @@ static volatile uint16_t battery, sinceBattery, lo = 0xFFFFu, hi;
 static volatile uint32_t samples;
 static char station[7];
 static uint8_t stationSsid;             /* SSID, path << 4 for the acks */
-static struct { char to[10], id[6], as[10]; uint32_t at; bool pending; } ackq;
+static struct { char to[10], id[6], as[10]; uint32_t at, freq; bool pending; } ackq;
 static bool seeded;
 
 /* One software conversion of the battery channel, then back to the audio.
@@ -155,6 +156,7 @@ void APRS_BG_Tune(void)
 {
     if (state != RUNNING)
         return;
+    aprs_rx_freq = gRxVfo->pRX->Frequency;         /* the messages carry it */
     BK4819_SetAF(BK4819_AF_FM);                     /* the RX audio out of the BK4829 ... */
     AUDIO_AudioPathOff();                           /* ... and the speaker off */
 }
@@ -200,10 +202,10 @@ static void afskByte(uint8_t v, bool stuff)
     }
 }
 
-/* As the apps' tx_state: TX allowed on the TX VFO, battery fine, FM. */
-static bool txAllowed(void)
+/* As the apps' tx_state: TX allowed on f, battery fine, FM. */
+static bool txAllowed(uint32_t f)
 {
-    if (TX_freq_check(gTxVfo->pTX->Frequency) != 0 && gTxVfo->TX_LOCK) return false;
+    if (TX_freq_check(f) != 0 && gTxVfo->TX_LOCK) return false;
     if (gBatteryDisplayLevel == 0 || gBatteryDisplayLevel > 6) return false;
     return gTxVfo->Modulation == MODULATION_FM;
 }
@@ -215,7 +217,10 @@ static void sendAck(void)
     memcpy(text + 3, ackq.id, 6);
     const uint8_t n = aprs_tx_frame(f, ackq.as, (uint8_t)((stationSsid >> 4) & 3u), ackq.to, text);
     hwStop();                                       /* the interrupt off: even bits */
+    const uint32_t vfoTx = gCurrentVfo->pTX->Frequency;
+    gCurrentVfo->pTX->Frequency = ackq.freq;        /* where the message was heard */
     RADIO_SetTxParameters();
+    gCurrentVfo->pTX->Frequency = vfoTx;
     const uint16_t io = BK4819_ReadRegister(0x33);  /* the red LED, as the apps light it */
     if (io & 0x20u) BK4819_WriteRegister(0x33, (uint16_t)(io | 1u));
     BK4819_WriteRegister(0x51, 0);                  /* no CTCSS/DCS under the AFSK */
@@ -243,7 +248,8 @@ void APRS_BG_Service(void)
         return;
     APRS_STORE_Sync();
     const uint32_t now = SCHEDULER_GetTick10ms() * 10u;
-    if (aprs_rx_ack_due(ackq.to, ackq.id, ackq.as)) {
+    if (aprs_rx_ack_due(ackq.to, ackq.id, ackq.as, &ackq.freq)) {
+        if (!ackq.freq) ackq.freq = gCurrentVfo->pTX->Frequency;
         ackq.at = now + ACK_DELAY_MS;
         ackq.pending = true;
     }
@@ -251,7 +257,7 @@ void APRS_BG_Service(void)
         return;
     if (aprs_rx_busy()) { ackq.at = now + ACK_RETRY_MS; return; }
     ackq.pending = false;
-    if (txAllowed())
+    if (txAllowed(ackq.freq))
         sendAck();
 }
 

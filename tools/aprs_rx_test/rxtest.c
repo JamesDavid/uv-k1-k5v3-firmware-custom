@@ -37,7 +37,8 @@ int main(int argc, char **argv)
         if (!(n % 480)) {                         /* the main loop, every 50 ms */
             aprs_rx_poll();
             char to[10], id[6], as[10];
-            if (aprs_rx_ack_due(to, id, as)) printf("ack due: %s>%s ack%s\n", as, to, id);
+            uint32_t fq;
+            if (aprs_rx_ack_due(to, id, as, &fq)) printf("ack due: %s>%s ack%s\n", as, to, id);
         }
     }
     fclose(f);

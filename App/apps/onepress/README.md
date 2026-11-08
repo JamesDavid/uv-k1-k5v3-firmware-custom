@@ -82,8 +82,8 @@ To read all APRS traffic, use the APRS RX app.
 A message that carries a number (`{12`: most radios and apps add one) asks
 for an acknowledgement, and the sender repeats it until one gets through. The
 radio sends it by itself, `ack12` from the address the message was sent to,
-about 1.5 s after the message once the channel is quiet, on the TX VFO and
-by the path set in OP APRS; a repeat is acknowledged again but kept once. The
+about 1.5 s after the message once the channel is quiet, on the frequency
+it was heard on and by the path set in OP APRS; a repeat is acknowledged again but kept once. The
 red LED lights for the half second it takes. Answers to your own messages
 (`ack` / `rej`) are not shown as messages: OP APRS shows them.
 
@@ -112,6 +112,11 @@ shows it once. When the answer is heard the bottom line says `DELIVERED` (or
 forward it to APRS-IS, so the addressee sees it on aprs.fi or in an APRS app
 too. The callsign, SSID and path set here are also the ones the receiver
 listens for and acknowledges with.
+
+A message to a station in the inbox (a reply) goes out on the frequency its
+last message was heard on, simplex, even if the VFO has moved since: the
+frequency shown is that one, and the `FROM` line ends in `REPLY`. Messages
+keep the frequency in flash too. Otherwise it goes out on the TX VFO.
 
 | Key | Action |
 |---|---|

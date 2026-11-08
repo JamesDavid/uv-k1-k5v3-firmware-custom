@@ -17,7 +17,8 @@
  *
  * OnePress may hand over the addressee of a reply (from OP Inbox). The
  * background receiver (API level 5) listens for messages to the callsign and
- * SSID set here.
+ * SSID set here. To a station in the inbox, the message goes out on the
+ * frequency its last message was heard on (shown, and marked REPLY).
  */
 
 #include <stdint.h>
@@ -56,6 +57,7 @@ static const char *const TAPS[10] = { "0", "1-", "ABC2", "DEF3", "GHI4", "JKL5",
 
 static struct {
     const app_api_t *api;
+    bool reply;
     uint8_t flen, prevKey, space, ones, status, edit, tapKey, tapAt, sent, id, delivered;
     bool running, redraw;
     uint32_t tPrev, tCyc, next, tapMs, downAt;
@@ -198,12 +200,28 @@ static void send(void)
     g.delivered = A->rx_delivered();
 }
 
+/* To a station in the inbox: its frequency, else the TX VFO's. */
+static void replyFreq(void)
+{
+    uint32_t f = 0;
+    for (uint8_t i = A->rx_count(); i-- > 0;) {
+        const app_rx_msg_t *m = A->rx_msg(i);
+        uint8_t k = 0;
+        while (k < TO_MAX && TO[k] && TO[k] == (uint8_t)m->from[k]) k++;
+        if (k && (k == TO_MAX || !TO[k]) && !m->from[k]) f = m->freq;
+    }
+    A->tx_freq_set(0);
+    g.reply = f && f != A->tx_freq();
+    if (g.reply) A->tx_freq_set(f);
+}
+
 /* ---- display ---- */
 static void tiny(uint8_t y, char *end) { *end = 0; A->print_tiny(g.str, 0, y, false, true); }
 
 static void draw(void)
 {
     char *o;
+    replyFreq();
     A->display_clear();
     A->status_clear();
     A->print_inverse("APRS MSG", 2, 0, true, true, 2 + 8 * 4);
@@ -230,6 +248,7 @@ static void draw(void)
     memcpy(o, c, n); o += n;
     if (ROUTE & 15u) { *o++ = '-'; o = putu(o, ROUTE & 15u); }
     if ((ROUTE >> 4) & 7u) { *o++ = ' '; o = put(o, PATHS[(ROUTE >> 4) & 7u]); }
+    if (g.reply) o = put(o, " REPLY");
     tiny(27, o);                                    /* print_tiny rows are y + 8: clear of the frequency at 40 */
     A->draw_frequency(A->tx_freq(), 0, 4);
     o = g.str;

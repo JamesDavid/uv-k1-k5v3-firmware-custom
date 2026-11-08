@@ -88,7 +88,7 @@ int main(int argc, char **argv)
     if (readN >= 0 && aprs_rx_msg((uint8_t)readN)) { aprs_rx_msg((uint8_t)readN)->unread = 0; APRS_STORE_Sync(); }
     show("now");
     uint8_t used = 0;
-    while (used < 32 && sector[used * 128] == 0xA5) used++;
+    while (used < 32 && sector[used * 128] != 0xFF) used++;
     printf("records %u/32, writes %d, erases %d\n", used, writes, erases);
     save();
     return 0;
