@@ -14,8 +14,6 @@
  * Out of the apps it keeps listening on the main screen (APRS_BG_Main), with
  * the radio's own audio and squelch: it hears what the squelch lets through.
  * It pauses while the radio transmits or sleeps (power save).
- * The same samples feed the CW receiver (App/onepress/cw_rx.c): MCW heard
- * while the apps are open, or on the main screen, shown by OP CW.
  */
 #include <stddef.h>
 #include <string.h>
@@ -29,7 +27,6 @@
 #include "helper/battery.h"
 #include "onepress/aprs_rx.h"
 #include "onepress/aprs_tx.h"
-#include "onepress/cw_rx.h"
 #include "radio.h"
 #include "scheduler.h"
 #include "audio.h"
@@ -153,7 +150,6 @@ void ADC_COMP_IRQHandler(void)
         return;
     const uint16_t v = (uint16_t)(ADC1->DR & 0x0FFFu); /* reading DR clears EOC */
     aprs_rx_sample(v);
-    cw_rx_sample(v, aprs_rx_busy());               /* not CW while an APRS frame comes in */
     samples++;
     if (v < lo) lo = v;
     if (v > hi) hi = v;
@@ -295,7 +291,6 @@ void APRS_BG_Start(const char *call, uint8_t ssid)
     APRS_STORE_Sync();
     if (memcmp(c, station, 7) || (ssid & 15u) != (stationSsid & 15u)) {   /* another station: the inbox stays */
         aprs_rx_init(c, ssid & 15u);
-        if (!station[0]) cw_rx_init();              /* the first start: the CW heard stays after */
         samples = 0;
         memcpy(station, c, 7);
     }
@@ -347,12 +342,6 @@ void APRS_BG_Main(void)
         unreadShown = u;
         gUpdateStatus = true;
     }
-}
-
-const char *APRS_BG_CwHeard(uint8_t *wpm)
-{
-    if (wpm) *wpm = cw_rx_wpm();
-    return cw_rx_text;
 }
 
 uint8_t APRS_BG_UnreadNow(void) { return state == OFF ? 0u : aprs_rx_unread(); }

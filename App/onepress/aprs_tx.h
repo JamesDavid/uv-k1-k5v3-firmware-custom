@@ -17,13 +17,11 @@ uint8_t aprs_tx_frame(uint8_t *f, const char *src, uint8_t path, const char *to,
  * characters, NUL-terminated), from lat / lon in 1/6000 degree, north and
  * east positive, with the symbol sym of the primary table. Returns 20. */
 uint8_t aprs_tx_position(char *o, int32_t lat, int32_t lon, char sym);
-/* What a frequency (10 Hz units) is for, by the band plans: APRS_TX_APRS an
- * APRS frequency (144.390 in North America, the main one: APRS_TX_APRS_MAIN;
- * 144.800 Europe, 145.825 the ISS, 445.925 UHF), APRS_TX_CW_ONLY 144.0-144.1
- * MHz, CW only (US: no MCW, voice or data). */
+/* Whether a frequency (10 Hz units) is an APRS one, by the band plans:
+ * APRS_TX_APRS (144.390 in North America, the main one: APRS_TX_APRS_MAIN;
+ * 144.800 Europe, 145.825 the ISS, 445.925 UHF). */
 #define APRS_TX_APRS      0x01u
 #define APRS_TX_APRS_MAIN 0x02u
-#define APRS_TX_CW_ONLY   0x04u
 uint8_t aprs_tx_freq_kind(uint32_t f);
 
 #endif

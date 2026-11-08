@@ -10,8 +10,7 @@ APP="-std=gnu11 -O1 -fno-builtin -Wno-attributes"
 gcc $APP $I -Dapp_main=onepress_main -Dmemset=op_memset -Dmemcpy=op_memcpy -c App/apps/onepress/onepress_app.c -o build/sim_onepress.o
 gcc $APP $I -Dapp_main=opaprs_main -Dmemset=aprs_memset -Dmemcpy=aprs_memcpy -DSYST_VAL='sim_systval()' -DSYST_LOAD=479999u \
     -include stdint.h -include tools/onepress_sim/systval.h -c App/apps/opaprs/opaprs_app.c -o build/sim_opaprs.o
-gcc $APP $I -Dapp_main=opcw_main -Dmemset=cw_memset -Dmemcpy=cw_memcpy -c App/apps/opcw/opcw_app.c -o build/sim_opcw.o
 gcc $APP $I -Dapp_main=opinbox_main -Dmemset=inbox_memset -c App/apps/opinbox/opinbox_app.c -o build/sim_opinbox.o
 gcc $APP $I -Dapp_main=oploc_main -Dmemset=loc_memset -c App/apps/oploc/oploc_app.c -o build/sim_oploc.o
-gcc -std=gnu11 -O2 -Wall $I $OP tools/onepress_sim/opsim.c App/app/onepress_svc.c App/onepress/onepress.c App/onepress/aprs_rx.c App/onepress/aprs_tx.c App/onepress/cw_rx.c \
-    build/sim_onepress.o build/sim_opaprs.o build/sim_opcw.o build/sim_opinbox.o build/sim_oploc.o -o build/opsim
+gcc -std=gnu11 -O2 -Wall $I $OP tools/onepress_sim/opsim.c App/app/onepress_svc.c App/onepress/onepress.c App/onepress/aprs_rx.c App/onepress/aprs_tx.c \
+    build/sim_onepress.o build/sim_opaprs.o build/sim_opinbox.o build/sim_oploc.o -o build/opsim

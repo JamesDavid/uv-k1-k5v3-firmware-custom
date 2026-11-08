@@ -45,8 +45,7 @@
 #include "app/aprs_bg.h"
 #include "app/aprs_store.h"
 #include "onepress/aprs_tx.h"
-_Static_assert(APP_FREQ_APRS == APRS_TX_APRS && APP_FREQ_APRS_MAIN == APRS_TX_APRS_MAIN &&
-               APP_FREQ_CW_ONLY == APRS_TX_CW_ONLY, "freq_kind bits");
+_Static_assert(APP_FREQ_APRS == APRS_TX_APRS && APP_FREQ_APRS_MAIN == APRS_TX_APRS_MAIN, "freq_kind bits");
 #else
 #define APRS_BG_Stop()      ((void)0)
 #define APRS_BG_Apps(on)    ((void)0)
@@ -1384,7 +1383,6 @@ static const app_api_t app_api = {
     .loc                 = APRS_STORE_Loc,
     .loc_save            = APRS_STORE_LocSave,
     .loc_report          = APRS_STORE_LocReport,
-    .cw_heard            = APRS_BG_CwHeard,
     .freq_kind           = aprs_tx_freq_kind,
 #endif
 };

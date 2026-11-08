@@ -1,6 +1,6 @@
 /*
  * OP Inbox - the APRS messages to this station that the radio heard in the
- * background while OnePress (or OP APRS, OP CW) ran: newest first, the last 3
+ * background while OnePress (or OP APRS, OP Location) ran: newest first, the last 3
  * since power on. Opening one marks it read.
  *
  * Keys: UP/DOWN the next / previous message · MENU or PTT reply: OnePress,

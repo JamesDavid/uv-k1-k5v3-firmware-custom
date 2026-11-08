@@ -58,7 +58,7 @@
  *   5  background APRS message receiver (APP_CAP_APRS_INBOX): rx_start,
  *      rx_station, rx_count, rx_msg, rx_unread, rx_stats, rx_msgid,
  *      rx_delivered (acks), tx_freq_set, loc, loc_save, loc_report,
- *      cw_heard, freq_kind */
+ *      freq_kind */
 #define APP_ABI_MAJOR  1u
 #define APP_API_LEVEL  5u
 
@@ -197,10 +197,9 @@ typedef struct {
 } app_loc_t;
 
 /* freq_kind: an APRS frequency (144.390 North America, the main one; 144.800
- * Europe; 145.825 the ISS; 445.925 UHF), and 144.0-144.1 MHz, CW only (US). */
+ * Europe; 145.825 the ISS; 445.925 UHF). */
 #define APP_FREQ_APRS      0x01u
 #define APP_FREQ_APRS_MAIN 0x02u
-#define APP_FREQ_CW_ONLY   0x04u
 
 /* The receiver at work (rx_stats): for a diagnostics line. */
 typedef struct {
@@ -575,10 +574,6 @@ typedef struct app_api {
     /* The attached location as an APRS position report's information field,
      * "!4903.50N/07201.75W[" (out: 21 bytes): its length, 0 for none. */
     uint8_t  (*loc_report)(char *out);
-    /* The CW the receiver heard (Morse as a 600-1000 Hz tone over FM, up to
-     * ~30 WPM): the last 32 characters, oldest first, and the speed in WPM
-     * (wpm may be NULL). */
-    const char *(*cw_heard)(uint8_t *wpm);
     /* What a frequency (x10 Hz) is for, by the band plans: APP_FREQ_* bits,
      * for a warning before sending (nothing is enforced). */
     uint8_t  (*freq_kind)(uint32_t f);
@@ -606,7 +601,7 @@ _Static_assert(offsetof(app_api_t, handoff) == 356u &&
                offsetof(app_api_t, vfo_stage) == 392u &&
                offsetof(app_api_t, op_open) == 396u &&
                offsetof(app_api_t, rx_start) == 428u &&
-               sizeof(app_api_t) == 484u,
+               sizeof(app_api_t) == 480u,
                "app_api_t is append-only: every edition shares this layout");
 #endif
 

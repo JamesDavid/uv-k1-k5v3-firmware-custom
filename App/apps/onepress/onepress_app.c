@@ -17,16 +17,16 @@
  *            deleting goes back to the end
  *   F        ABC: spell exactly with multi-tap (call signs, names), F again back
  *   EXIT     delete; held, delete words; on an empty message, quit
- *   MENU     send: 1 APRS message (with no message: its settings), 2 CW, 3 clear,
- *            4 the APRS messages received
- *   PTT      send the way the message was last sent
+ *   MENU     1 send as an APRS message (with no message: its settings), 2 the
+ *            APRS messages received, 3 clear, 4 the locations sent with messages
+ *   PTT      send it as an APRS message
  * The message survives leaving the app (until power off) and sending, to send
  * it again; a sender app hands back here when it is done.
  *
- * While it runs (and OP APRS, OP CW, OP Inbox after it) the radio listens for
- * APRS messages to the station in the background (API level 5): "1 MSG" and a
- * beep when one comes in, MENU 4 to read it in OP Inbox, which can hand its
- * sender back here as the addressee of the reply.
+ * While it runs (and OP APRS, OP Inbox, OP Location after it) the radio
+ * listens for APRS messages to the station in the background (API level 5):
+ * "1 MSG" and a beep when one comes in, MENU 2 to read it in OP Inbox, which
+ * can hand its sender back here as the addressee of the reply.
  */
 
 #include <stdint.h>
@@ -46,7 +46,7 @@
 #define CFG_MAGIC   0x4Fu
 
 static const char APRS_APP[] = "OP APRS";
-static const char CW_APP[] = "OP CW";
+static const char LOC_APP[] = "OP Location";
 static const char INBOX_APP[] = "OP Inbox";
 /* Multi-tap letters per key 2-9 (each group ends with the digit). */
 static const char *const TAPS[8] = { "abc", "def", "ghi", "jkl", "mno", "pqrs", "tuv", "wxyz" };
@@ -59,7 +59,7 @@ static struct {
     const app_api_t *api;
     char *keys;                         /* the resident draft (api->op_keys)        */
     uint8_t n;                          /* its length                               */
-    uint8_t mode, screen, sender;       /* sender: 1 APRS, 2 CW (PTT sends that way) */
+    uint8_t mode, screen;
     uint8_t key, held;                  /* the key down, and what holding it did    */
     uint8_t tapKey, tapAt;              /* multi-tap: key, letter index             */
     uint8_t unread;                     /* APRS messages received, not read yet     */
@@ -214,12 +214,11 @@ static void go(const char *app, const char *msg)
     else { g.screen = SCR_MENU; g.redraw = true; g.line[0] = 1; }  /* line[0] = 1: not installed */
 }
 
-static void send(uint8_t how)
+/* To OP APRS (empty too, for its settings), with the reply's addressee. */
+static void send(void)
 {
-    if (!g.text[0] && how != 1) return;     /* OP APRS opens empty too, for its settings */
     memcpy(A->op_text, g.text, sizeof g.text);
-    g.sender = how;
-    go(how == 1 ? APRS_APP : CW_APP, how == 1 ? g.to : "");  /* OP APRS: the reply's addressee */
+    go(APRS_APP, g.to);
 }
 
 static void press(uint8_t key)
@@ -227,8 +226,9 @@ static void press(uint8_t key)
     g.redraw = true;
     if (g.screen == SCR_MENU) {
         g.screen = SCR_TYPE;
-        if (key == APP_KEY_1 || key == APP_KEY_2) send((uint8_t)(key - APP_KEY_0));
-        else if (key == APP_KEY_4) go(INBOX_APP, "");
+        if (key == APP_KEY_1) send();
+        else if (key == APP_KEY_2) go(INBOX_APP, "");
+        else if (key == APP_KEY_4) go(LOC_APP, "");
         else if (key == APP_KEY_3) { g.n = 0; g.nLocks = 0; decode(); }
         return;
     }
@@ -243,7 +243,7 @@ static void press(uint8_t key)
     }
     else if (key == APP_KEY_F) { g.mode ^= MODE_ABC; g.tapKey = 0; }
     else if (key == APP_KEY_MENU) { g.screen = SCR_MENU; g.line[0] = 0; }
-    else if (key == APP_KEY_PTT && g.text[0]) send(g.sender ? g.sender : 1);
+    else if (key == APP_KEY_PTT && g.text[0]) send();
     else if (key == APP_KEY_EXIT && !g.n) g.running = false;
 }
 
@@ -296,9 +296,9 @@ static void draw(void)
     } else if (g.screen == SCR_MENU) {
         A->print_normal(g.line[0] ? "App missing" : "Send", 0, 127, 0);
         A->print_normal("1 APRS message", 4, 0, 2);
-        A->print_normal("2 CW", 4, 0, 3);
+        A->print_normal("2 Inbox", 4, 0, 3);
         A->print_normal("3 Clear", 4, 0, 4);
-        A->print_normal("4 Inbox", 4, 0, 5);
+        A->print_normal("4 Location", 4, 0, 5);
     } else {
         /* the text, wrapped at spaces, its last ROWS lines; the selected word underlined */
         uint8_t start[24], nl = 0, len = slen(g.text), s = 0;
@@ -329,7 +329,7 @@ static void draw(void)
             A->print_tiny("0 SPACE    1 . , ? ! '", 0, 20, false, true);
             A->print_tiny("* NEXT GUESS   F ABC SPELL", 0, 28, false, true);
             A->print_tiny("EXIT DELETE, EMPTY: QUIT", 0, 36, false, true);
-            A->print_tiny("MENU 1 APRS/SETUP 2 CW 3 CLEAR", 0, 44, false, true);
+            A->print_tiny("MENU 1 APRS 2 INBOX 3 CLEAR", 0, 44, false, true);
         }
         for (uint8_t l = first; l < nl; l++) {
             uint8_t a = start[l], b = l + 1 < nl ? start[l + 1] : len, c = 0;
@@ -359,7 +359,7 @@ static void draw(void)
 __attribute__((section(".text.entry"), used))
 void app_main(const app_api_t *api)
 {
-    uint8_t c[9];                       /* magic, sender, the station's call and SSID */
+    uint8_t c[9];                       /* magic, unused (was the sender), the station's call and SSID */
     char call[7];
     g.api = api;
     g.keys = api->op_keys;
@@ -367,7 +367,6 @@ void app_main(const app_api_t *api)
     g.sel = -1;
     g.ok = api->op_open() == 0;
     api->cfg_load(c, sizeof c);
-    if (c[0] == CFG_MAGIC && c[1] <= 2) g.sender = c[1];
     /* from OP Inbox, the station to reply to; back from a sender, the message
      * stays, to send again */
     if (api->handoff_read(g.to, sizeof g.to - 1u, NULL) <= 1) g.to[0] = 0;
@@ -399,6 +398,6 @@ void app_main(const app_api_t *api)
     g.keys[g.n] = 0;
     c[0] = CFG_MAGIC;
     if (api->rx_station(call, &c[8])) memcpy(c + 2, call, 6);
-    c[1] = g.sender;
+    c[1] = 1;
     api->cfg_save(c, sizeof c);
 }

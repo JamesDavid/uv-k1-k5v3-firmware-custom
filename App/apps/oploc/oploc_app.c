@@ -4,7 +4,7 @@
  * the resident service (loc, API level 5), kept over power off with the inbox.
  *
  * Keys: UP/DOWN the slot · MENU edit it · 5 attach it to OP APRS's messages
- *   (again: none) · EXIT back (to OP APRS when started from it).
+ *   (again: none) · EXIT back to the app that opened it (OnePress, OP APRS).
  * Editing: the digits in order, degrees, minutes and hundredths of a minute,
  *   latitude then longitude (49 03.50 N, 072 01.75 W: 4903500720175); * N/S,
  *   F E/W; EXIT deletes (on none: the slot cleared); MENU done.
@@ -22,7 +22,8 @@ static struct {
     const app_api_t *api;
     app_loc_t *loc;
     uint8_t prevKey, slot, edit, n, south, west;
-    bool running, redraw, changed, fromAprs;
+    bool running, redraw, changed;
+    char from[17];          /* the app that opened this one, "" for the menu */
     char dig[DIGITS];
     char str[34];
 } g;
@@ -160,11 +161,10 @@ static void keys(void)
 __attribute__((section(".text.entry"), used))
 void app_main(const app_api_t *api)
 {
-    char from[17];
     g.api = api;
     g.prevKey = APP_KEY_INVALID;
     g.loc = api->loc();
-    g.fromAprs = api->handoff_read(NULL, 0, from) >= 0 && from[0] == 'O' && from[3] == 'A';
+    if (api->handoff_read(NULL, 0, g.from) < 0) g.from[0] = 0;
     if (g.loc->attach) g.slot = (uint8_t)((g.loc->attach - 1u) & 3u);
     api->backlight_on();
     g.running = true;
@@ -177,5 +177,5 @@ void app_main(const app_api_t *api)
         api->backlight_update();
     }
     if (g.changed) api->loc_save();
-    if (g.fromAprs) api->handoff("OP APRS", NULL, 0);
+    if (g.from[0]) api->handoff(g.from, NULL, 0);
 }

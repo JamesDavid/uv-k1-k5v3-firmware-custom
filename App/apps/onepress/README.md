@@ -2,11 +2,11 @@
 
 `OnePress` types a message on the keypad with one press per letter, and the
 whole sentence picks the words: `4663` is "good", "home" or "gone", and the
-words around it say which. Two sender apps put the message on the air, and
-the radio listens for answers while you type:
+words around it say which. It is an APRS messenger that sits beside the
+radio's normal voice use, on repeaters or simplex, and listens for answers
+while you type or talk:
 
 - `OP APRS` sends it as an APRS message to a callsign (Bell 202 AFSK, as APRS TX);
-- `OP CW` sends it in Morse, as a tone over FM (MCW) or as CW (the carrier keyed);
 - `OP Inbox` shows the APRS messages to your callsign that the radio heard in
   the background while these apps were open, and replies to them;
 - `OP Location` keeps 4 locations, one of which OP APRS can send after a message.
@@ -40,9 +40,9 @@ saw, the words neither knows spelled out:
    receiver. After flashing it over another edition, check `F Lock` (hidden
    menu): profiles after `438` moved up two places. Put it in a Multiboot slot
    to keep your usual edition.
-2. Build the apps, `./compile-app.sh onepress opaprs opcw opinbox oploc`, and
-   install `OnePress.app`, `OPAPRS.app`, `OPCW.app`, `OPInbox.app` and
-   `OPLocation.app` with UV Studio.
+2. Build the apps, `./compile-app.sh onepress opaprs opinbox oploc`, and
+   install `OnePress.app`, `OPAPRS.app`, `OPInbox.app` and `OPLocation.app`
+   with UV Studio.
    Reinstall them all after flashing a new firmware.
 3. Upload the model over the USB-C cable, from the main screen:
    `python tools/onepress_upload.py COM5 onepress-r.bin` (`pip install pyserial`;
@@ -61,8 +61,8 @@ saw, the words neither knows spelled out:
 | UP / DOWN | select the word before / after, to fix it with `*` (`* FIXES`); the rest of the message re-decodes around the fix. DOWN past the last word, typing or deleting goes back to the end |
 | F | `ABC`: spell exactly with multi-tap (call signs, names); F again: back |
 | EXIT | delete the last key; held, delete words; on an empty message, quit |
-| MENU | `1` APRS message (with no message: its settings), `2` CW, `3` clear, `4` inbox |
-| PTT | send the way you sent last time |
+| MENU | `1` APRS message (with no message: its settings), `2` inbox, `3` clear, `4` locations |
+| PTT | send it as an APRS message |
 
 The bottom line shows the length against the 67 characters of an APRS
 message. Call signs typed in `ABC` (`ke7aqa`) show in capitals. The message
@@ -72,10 +72,10 @@ sent, so PTT sends it again; `MENU` `3` clears it. To leave the apps: `MENU`
 
 ## Receiving APRS messages
 
-While OnePress, OP APRS, OP CW or OP Inbox is open, the radio decodes APRS on
+While OnePress, OP APRS, OP Inbox or OP Location is open, the radio decodes APRS on
 the RX VFO in the background and keeps the messages addressed to your callsign
 and SSID set in OP APRS (`KE7AQA-7`), or to the bare callsign (`KE7AQA`). A
-new one beeps and shows `1 MSG` at the top of OnePress; `MENU` `4` reads it.
+new one beeps and shows `1 MSG` at the top of OnePress; `MENU` `2` reads it.
 The last 3 are kept in external flash (the sector after the word model), read
 or not, so they are still there after the radio is turned off. The speaker
 stays off in the apps; the receiver pauses while an app transmits.
@@ -86,8 +86,8 @@ been set (`ALWAYS` in OP Inbox; `F` there turns it off and on). There it uses
 the radio's own audio: it decodes what the squelch lets through, on the RX VFO
 (both, with dual watch), and pauses while the radio transmits or sleeps (power
 save). A new message gives three short beeps and an envelope with the number
-unread on the status bar; OnePress `MENU` `4` reads them. Its acks go out from
-the main screen as well. Listening costs about 12% of the CPU, and some
+unread on the status bar; OnePress `MENU` `2` reads them. Its acks go out from
+the main screen as well. Listening costs about 8% of the CPU, and some
 battery while the squelch is open.
 
 A message that carries a number (`{12`: most radios and apps add one) asks
@@ -169,44 +169,35 @@ switches N / S, `F` E / W (W to start with), EXIT deletes a digit (with none
 left: the slot is cleared), MENU done. A GPS or a map app gives degrees and
 minutes; from decimal degrees, the minutes are the decimals times 60.
 
-## OP CW
+## With voice repeaters
 
-| Key | Action |
-|---|---|
-| PTT | send; EXIT stops. On an APRS frequency, or MCW in 144.0-144.1 MHz, a warning first; PTT again sends |
-| UP / DOWN or 2 / 8 | speed, 5-40 WPM (18) |
-| 3 / 9 | tone, 400-1200 Hz (700), for MCW |
-| 1 | `MCW` (a tone over FM: any FM radio hears it) / `CW` (the carrier alone keyed, A1A: an SSB/CW receiver hears it; an FM radio does not hear a tone) |
-| EXIT | back to OnePress |
-
-The receiver decodes CW too, from the same audio and wherever it listens (the
-apps, the main screen): Morse sent as a 600-1000 Hz tone over FM (MCW, as OP CW
-sends it), up to about 30 WPM, the speed followed. OP CW shows the last
-characters as `HEARD CQ CQ DE W1ABC K`, and the speed after `RX`. A lone E or
-T between word gaps is left out: that is what squelch noise makes. A carrier
-keyed without a tone (CW for an SSB receiver) is not heard on FM.
+APRS has a frequency of its own (144.390 MHz in North America), so for messages
+while you use a repeater, put one VFO on the repeater and the other on 144.390,
+with dual watch on. The receiver listens on whichever VFO the radio is on;
+dual watch stops on the one that hears something, so a packet on 144.390 is
+caught as long as the repeater is quiet at that moment. Inside the apps the
+radio stays on the selected VFO (no dual watch there): select the 144.390 one
+while you type, or OP APRS warns `NOT APRS` before sending through the
+repeater. Voice works as usual
+(PTT on the main screen pauses the receiver). Acks and replies go out on the
+frequency the message was heard on, simplex, whichever VFO is selected for
+transmit, so they never go out through the repeater by mistake.
 
 ## Frequencies
 
-Nothing is enforced (band plans differ from country to country), but the apps
-warn before sending where it would be out of place, and send on a second PTT:
-
-- OP APRS off an APRS frequency: 144.390 MHz (North America, the main one),
-  144.800 (Europe), 145.825 (the ISS and satellites) or 445.925 (UHF, some
-  regions). This also catches two radios that are not on the same frequency.
-- OP CW on an APRS frequency (it would jam the network), or MCW in 144.0-144.1
-  MHz, which is CW only in the US: use `CW` there. MCW belongs on a quiet FM
-  simplex frequency, not 146.52, the national voice calling frequency.
-
-CW mode keys the power amplifier on and off with no shaping, so check it for key
-clicks on an SDR before using it on the air.
+Nothing is enforced (band plans differ from country to country), but OP APRS
+warns before sending off an APRS frequency, `NOT APRS: 144.390`, and sends on a
+second PTT. The APRS frequencies: 144.390 MHz (North America, the main one),
+144.800 (Europe), 145.825 (the ISS and satellites) and 445.925 (UHF, some
+regions). This also catches two radios that are not on the same frequency.
+Keep voice off 144.390: it is for data only.
 
 > [!CAUTION]
 > Transmit only on frequencies, power levels and modes your licence allows.
 
 ## Testing on a PC
 
-`tools/onepress_sim/build.sh` builds `build/opsim`, which runs the five apps
+`tools/onepress_sim/build.sh` builds `build/opsim`, which runs the four apps
 against a simulated radio: the real resident service and decoder, the model
 file as the external flash, keys from a script, the screen as text, and every
 APRS transmission decoded back from its tones, FCS checked. For example
@@ -214,9 +205,7 @@ APRS transmission decoded back from its tones, FCS checked. For example
 A third argument, `audio.u16@seconds` (`tools/aprs_rx_test/gen.py`), is RX
 audio the background receiver hears from that time on. `tools/aprs_rx_test`
 also tests the decoder on recorded traffic (`rxtest`) and the inbox in flash,
-power cuts included (`storetest`); `cwgen.py` makes MCW audio (speed, tone,
-level, noise, a hand key's jitter) for `cwtest`, which runs the CW receiver
-beside the APRS one.
+power cuts included (`storetest`).
 
 ## Resources
 
@@ -224,14 +213,12 @@ The decoder takes about 21 KB of flash and 2.1 KB of RAM (1.6 KB of working
 memory, a 256-byte read cache, the model's table), plus up to 2.5 KB of stack
 while it decodes; `System Info` shows the stack margin left. A key press reads
 the model about 2,000 times (32 bytes each, about 16 us at 24 MHz) with the cache. The apps fit the
-4 KiB overlay: OnePress 3.9 KB, OP APRS 4.0 KB, OP CW 1.7 KB, OP Inbox 1.6 KB,
-OP Location 1.6 KB.
+4 KiB overlay: OnePress 3.8 KB, OP APRS 4.0 KB, OP Inbox 1.6 KB, OP Location 1.6 KB.
 
 The receiver (`App/onepress/aprs_rx.c`, the APRS RX app's demodulator, and
 `App/app/aprs_bg.c`, with the inbox store `App/app/aprs_store.c` and the ack
-sender, the locations, the main screen and the CW receiver `App/onepress/cw_rx.c`)
-takes about 7.2 KB of flash and 1 KB of RAM. TIM15
+sender, the locations and the main screen) takes about 6.3 KB of flash and
+0.9 KB of RAM. TIM15
 starts each ADC conversion of the RX audio, 9600 a second, so the samples stay
 evenly spaced however late the interrupt runs; the interrupt uses about 8% of
-the CPU (12% with the CW receiver; 2,300 cycles at most of the 5,000 a
-sample allows).
+the CPU (1,800 cycles at most of the 5,000 a sample allows).

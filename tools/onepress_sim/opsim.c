@@ -1,5 +1,5 @@
 /*
- * opsim - runs the OnePress, OP APRS, OP CW and OP Inbox overlay apps on a PC against a
+ * opsim - runs the OnePress, OP APRS, OP Inbox and OP Location overlay apps on a PC against a
  * simulated app_api_t: the real resident service (App/app/onepress_svc.c) and
  * decoder, the model file as the external flash at APP_OP_MODEL_ADDR, keys from
  * a script, the screen printed as text, and every APRS transmission decoded
@@ -23,15 +23,13 @@
 #include "app/onepress_svc.h"
 #include "onepress/aprs_rx.h"
 #include "onepress/aprs_tx.h"
-#include "onepress/cw_rx.h"
 
 void onepress_main(const app_api_t *api);
 void opaprs_main(const app_api_t *api);
-void opcw_main(const app_api_t *api);
 void opinbox_main(const app_api_t *api);
 void oploc_main(const app_api_t *api);
-#define N_APPS 5
-static const char *names[N_APPS] = { "OnePress", "OP APRS", "OP CW", "OP Inbox", "OP Location" };
+#define N_APPS 4
+static const char *names[N_APPS] = { "OnePress", "OP APRS", "OP Inbox", "OP Location" };
 
 /* ---- the external flash: the model file at APP_OP_MODEL_ADDR ---- */
 static uint8_t *model;
@@ -138,7 +136,6 @@ static void rx_feed(void)
         if (rx_state != 1) continue;
         const uint16_t v = audio_fed < audio_n ? audio[audio_fed] : 2048;
         aprs_rx_sample(v);
-        cw_rx_sample(v, aprs_rx_busy());
     }
 }
 static void rx_start(const char *call, uint8_t ssid)
@@ -147,7 +144,6 @@ static void rx_start(const char *call, uint8_t ssid)
     for (int i = 0; i < 6 && call[i]; i++) c[i] = call[i];
     if (!c[0]) return;
     rx_feed();
-    if (!rx_call[0]) cw_rx_init();
     if (memcmp(c, rx_call, 7) || (ssid & 15) != (rx_ssid & 15)) { aprs_rx_init(c, ssid & 15); memcpy(rx_call, c, 7); }
     rx_ssid = ssid;
     aprs_rx_freq = vfo_freq;
@@ -200,7 +196,6 @@ static void draw_frequency(uint32_t f, uint8_t x, uint8_t line) { char s[20]; sn
 static uint32_t tx_freq(void) { return tx_override ? tx_override : vfo_freq; }
 static void tx_freq_set(uint32_t f) { tx_override = f; }
 static uint8_t freq_kind(uint32_t f) { return aprs_tx_freq_kind(f); }
-static const char *cw_heard(uint8_t *wpm) { rx_feed(); if (wpm) *wpm = cw_rx_wpm(); return cw_rx_text; }
 static uint32_t ticks_ms(void) { return now_ms() / 10 * 10; }
 static char *append_u32(char *o, uint32_t v) { return o + sprintf(o, "%u", v); }
 static char *append_i32(char *o, int32_t v) { return o + sprintf(o, "%d", v); }
@@ -221,7 +216,7 @@ static uint8_t loc_report(char *out)
     if (a < 1 || a > 4 || locs.lat[a - 1] == APP_LOC_NONE) return 0;
     return aprs_tx_position(out, locs.lat[a - 1], locs.lon[a - 1], '[');
 }
-static int running_app;                     /* 0 OnePress, 1 OP APRS, 2 OP CW */
+static int running_app;                     /* an index in names[] */
 static void cfg_load(uint8_t *b, uint8_t n) { memcpy(b, cfg[running_app], n > 16 ? 16 : n); }
 static void cfg_save(const uint8_t *b, uint8_t n) { memcpy(cfg[running_app], b, n > 16 ? 16 : n); }
 static char handoff_to[17];
@@ -362,7 +357,7 @@ static app_api_t api = {
     .op_open = OP_Open, .op_decode = OP_Decode, .op_render = OP_Render, .op_guesses = OP_Guesses,
     .op_choice = OP_Choice, .op_word = OP_Word, .op_keys = gOpKeys, .op_text = gOpText,
     .play_tone = play_tone, .rx_start = rx_start, .rx_station = rx_station, .rx_count = rx_count,
-    .rx_msg = rx_msg, .rx_unread = rx_unread, .rx_stats = rx_stats, .rx_msgid = rx_msgid, .rx_delivered = rx_delivered, .tx_freq_set = tx_freq_set, .loc = loc, .loc_save = loc_save, .loc_report = loc_report, .cw_heard = cw_heard, .freq_kind = freq_kind,
+    .rx_msg = rx_msg, .rx_unread = rx_unread, .rx_stats = rx_stats, .rx_msgid = rx_msgid, .rx_delivered = rx_delivered, .tx_freq_set = tx_freq_set, .loc = loc, .loc_save = loc_save, .loc_report = loc_report, .freq_kind = freq_kind,
 };
 
 int main(int argc, char **argv)
@@ -403,7 +398,7 @@ int main(int argc, char **argv)
         t += ms + 80;
     }
     script_end = t + 500;
-    void (*apps[N_APPS])(const app_api_t *) = { onepress_main, opaprs_main, opcw_main, opinbox_main, oploc_main };
+    void (*apps[N_APPS])(const app_api_t *) = { onepress_main, opaprs_main, opinbox_main, oploc_main };
     if (setjmp(done)) { printf("== (script over)\n"); dump(); return 0; }
     for (int hop = 0; hop < 20; hop++) {
         printf("== %s\n", names[running_app]);
