@@ -79,6 +79,14 @@ or not, so they are still there after the radio is turned off. The speaker
 stays off; the receiver stops on the main screen and while an app transmits.
 To read all APRS traffic, use the APRS RX app.
 
+A message that carries a number (`{12`: most radios and apps add one) asks
+for an acknowledgement, and the sender repeats it until one gets through. The
+radio sends it by itself, `ack12` from the address the message was sent to,
+about 1.5 s after the message once the channel is quiet, on the TX VFO and
+by the path set in OP APRS; a repeat is acknowledged again but kept once. The
+red LED lights for the half second it takes. Answers to your own messages
+(`ack` / `rej`) are not shown as messages: OP APRS shows them.
+
 ## OP Inbox
 
 | Key | Action |
@@ -97,9 +105,13 @@ check that the radio hears the sender on the main screen first.
 
 ## OP APRS
 
-`SRC-SSID>APZOP,path::ADDRESSEE:text`, with no message number. iGates forward
-it to APRS-IS, so the addressee sees it on aprs.fi or in an APRS app too. The
-callsign and SSID set here are also the ones the receiver listens for.
+`SRC-SSID>APZOP,path::ADDRESSEE:text{12`. The number asks the addressee for an
+acknowledgement; sending the same message again keeps it, so the addressee
+shows it once. When the answer is heard the bottom line says `DELIVERED` (or
+`REJECTED`); until then `SENT 1 NO ACK YET`, and PTT sends it again. iGates
+forward it to APRS-IS, so the addressee sees it on aprs.fi or in an APRS app
+too. The callsign, SSID and path set here are also the ones the receiver
+listens for and acknowledges with.
 
 | Key | Action |
 |---|---|
@@ -149,8 +161,8 @@ the model about 2,000 times (32 bytes each, about 16 us at 24 MHz) with the cach
 4 KiB overlay: OnePress 3.9 KB, OP APRS 2.9 KB, OP CW 1.5 KB, OP Inbox 1.5 KB.
 
 The receiver (`App/onepress/aprs_rx.c`, the APRS RX app's demodulator, and
-`App/app/aprs_bg.c`, with the inbox store `App/app/aprs_store.c`) takes about
-3.1 KB of flash and 0.9 KB of RAM. TIM15
+`App/app/aprs_bg.c`, with the inbox store `App/app/aprs_store.c` and the ack
+sender) takes about 4.8 KB of flash and 0.9 KB of RAM. TIM15
 starts each ADC conversion of the RX audio, 9600 a second, so the samples stay
 evenly spaced however late the interrupt runs; the interrupt uses about 8% of
 the CPU.
