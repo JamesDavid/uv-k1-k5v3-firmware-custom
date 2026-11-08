@@ -60,6 +60,7 @@ static struct {
     char *keys;                         /* the resident draft (api->op_keys)        */
     uint8_t n;                          /* its length                               */
     uint8_t mode, screen;
+    bool missing;                       /* the menu says "App missing": a hand-off failed */
     uint8_t key, held;                  /* the key down, and what holding it did    */
     uint8_t tapKey, tapAt;              /* multi-tap: key, letter index             */
     uint8_t unread;                     /* APRS messages received, not read yet     */
@@ -211,7 +212,7 @@ static void digit(uint8_t d)
 static void go(const char *app, const char *msg)
 {
     if (A->handoff(app, msg, msg[0] ? slen(msg) + 1u : 0)) g.running = false;
-    else { g.screen = SCR_MENU; g.redraw = true; g.line[0] = 1; }  /* line[0] = 1: not installed */
+    else { g.screen = SCR_MENU; g.redraw = true; g.missing = true; }
 }
 
 /* To OP APRS (empty too, for its settings), with the reply's addressee. */
@@ -242,7 +243,7 @@ static void press(uint8_t key)
         g.nGuess = 0;
     }
     else if (key == APP_KEY_F) { g.mode ^= MODE_ABC; g.tapKey = 0; }
-    else if (key == APP_KEY_MENU) { g.screen = SCR_MENU; g.line[0] = 0; }
+    else if (key == APP_KEY_MENU) { g.screen = SCR_MENU; g.missing = false; }
     else if (key == APP_KEY_PTT && g.text[0]) send();
     else if (key == APP_KEY_EXIT && !g.n) g.running = false;
 }
@@ -294,7 +295,7 @@ static void draw(void)
         A->print_tiny("UPLOAD IT FROM A PC WITH", 16, 30, false, true);
         A->print_tiny("TOOLS/ONEPRESS_UPLOAD.PY", 16, 38, false, true);
     } else if (g.screen == SCR_MENU) {
-        A->print_normal(g.line[0] ? "App missing" : "Send", 0, 127, 0);
+        A->print_normal(g.missing ? "App missing" : "Send", 0, 127, 0);
         A->print_normal("1 APRS message", 4, 0, 2);
         A->print_normal("2 Inbox", 4, 0, 3);
         A->print_normal("3 Clear", 4, 0, 4);

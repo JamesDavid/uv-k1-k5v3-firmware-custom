@@ -56,6 +56,24 @@ _Static_assert(sizeof(app_rx_msg_t) == sizeof(aprs_msg_t) && APP_RX_TEXT_MAX == 
 #define TXDELAY_FLAGS   40u
 #define TAIL_FLAGS      3u
 
+/* The receiver's states, and where it runs (inApp: a chain of apps, else the
+ * main screen). Every change goes through enter(); the events:
+ *
+ *   event              OFF          RUNNING              PAUSED
+ *   Start(station)     RUNNING      RUNNING (restarted)  RUNNING
+ *   Stop               -            OFF                  OFF
+ *   Pause              -            PAUSED               -
+ *   Resume             -            -                    RUNNING
+ *   Apps(true)         -            -                    RUNNING
+ *   Apps(false)        -            OFF if NO_MAIN       OFF if NO_MAIN
+ *   Main, power on     RUNNING      -                    -
+ *
+ * Pause: an app transmits or captures the audio, the radio transmits or goes
+ * to power save (Function), an ack is keyed. Resume: the same ends; on the
+ * main screen the radio's next function resumes it, in the apps only their
+ * tx_end or capture close does. Apps(true): a chain of apps starts, the radio
+ * in the foreground, whatever paused it on the main screen (power save) over.
+ * RUNNING: TIM15 and the ADC interrupt sample; entering it tunes the audio. */
 enum { OFF, RUNNING, PAUSED };
 
 static struct {
@@ -68,6 +86,7 @@ static char station[7];
 static uint8_t stationSsid;             /* SSID, path << 4 for the acks */
 static struct { char to[10], id[6], as[10]; uint32_t at, freq; bool pending; } ackq;
 static bool seeded, inApp;
+static void enter(uint8_t s);
 static uint8_t unreadShown;
 
 /* One software conversion of the battery channel, then back to the audio.
@@ -225,7 +244,7 @@ static void sendAck(void)
     char text[10] = "ack";
     memcpy(text + 3, ackq.id, 6);
     const uint8_t n = aprs_tx_frame(f, ackq.as, (uint8_t)((stationSsid >> 4) & 3u), ackq.to, text);
-    hwStop();                                       /* the interrupt off: even bits */
+    enter(PAUSED);                                  /* the interrupt off: even bits */
     const uint32_t vfoTx = gCurrentVfo->pTX->Frequency;
     gCurrentVfo->pTX->Frequency = ackq.freq;        /* where the message was heard */
     RADIO_SetTxParameters();
@@ -246,9 +265,8 @@ static void sendAck(void)
     while ((int32_t)(cycles() - afsk.next) < 0) {}
     BK4819_EnterTxMute();
     BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false);
-    RADIO_SetupRegisters(true);
-    hwStart();
-    APRS_BG_Tune();
+    RADIO_SetupRegisters(true);                     /* on the main screen its FOREGROUND resumes already */
+    enter(RUNNING);
 }
 
 void APRS_BG_Service(void)
@@ -286,8 +304,7 @@ void APRS_BG_Start(const char *call, uint8_t ssid)
     for (uint8_t i = 0; i < 6u && call[i]; i++) c[i] = call[i];
     if (!c[0])
         return;
-    if (state == RUNNING)
-        hwStop();
+    enter(OFF);                                     /* the demodulator reset with no interrupt */
     APRS_STORE_Sync();
     if (memcmp(c, station, 7) || (ssid & 15u) != (stationSsid & 15u)) {   /* another station: the inbox stays */
         aprs_rx_init(c, ssid & 15u);
@@ -296,18 +313,17 @@ void APRS_BG_Start(const char *call, uint8_t ssid)
     }
     stationSsid = ssid;
     APRS_STORE_SetStation(c, ssid);                 /* for the main screen, after power on */
-    hwStart();
-    state = RUNNING;
-    APRS_BG_Tune();
+    enter(RUNNING);
 }
 
 void APRS_BG_Apps(bool on)
 {
     inApp = on;
-    if (on)
-        return;
-    if (APRS_STORE_Loc()->flags & APP_LOC_F_NO_MAIN)
-        APRS_BG_Stop();
+    if (on) {
+        if (state == PAUSED)
+            enter(RUNNING);                         /* paused by the main screen's power save */
+    } else if (APRS_STORE_Loc()->flags & APP_LOC_F_NO_MAIN)
+        enter(OFF);
     else
         APRS_BG_Tune();                             /* the frequency the main screen tuned */
 }
@@ -346,29 +362,22 @@ void APRS_BG_Main(void)
 
 uint8_t APRS_BG_UnreadNow(void) { return state == OFF ? 0u : aprs_rx_unread(); }
 
-void APRS_BG_Stop(void)
+static void enter(uint8_t s)
 {
+    if (s == state)
+        return;
     if (state == RUNNING)
         hwStop();
-    state = OFF;
+    state = s;
+    if (s == RUNNING) {
+        hwStart();
+        APRS_BG_Tune();
+    }
 }
 
-void APRS_BG_Pause(void)
-{
-    if (state != RUNNING)
-        return;
-    hwStop();
-    state = PAUSED;
-}
-
-void APRS_BG_Resume(void)
-{
-    if (state != PAUSED)
-        return;
-    hwStart();
-    state = RUNNING;
-    APRS_BG_Tune();
-}
+void APRS_BG_Stop(void)   { enter(OFF); }
+void APRS_BG_Pause(void)  { if (state == RUNNING) enter(PAUSED); }
+void APRS_BG_Resume(void) { if (state == PAUSED) enter(RUNNING); }
 
 bool APRS_BG_Station(char *call, uint8_t *ssid)
 {
