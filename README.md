@@ -8,6 +8,20 @@ This repository is a fork of the [F4HWN custom firmware](https://github.com/arme
 
 A big thanks to DualTachyon, who paved the way by releasing the very first open-source [firmware](https://github.com/DualTachyon/uv-k5-firmware) for the UV-K5 V1. None of this would have been possible without that initial work !
 
+> [!NOTE]
+> **This is a fork with a OnePress edition** (branch `onepress`): an APRS
+> messenger beside the radio's normal voice use. Messages are typed with one
+> key press per letter and sent to a callsign; a receiver resident in the
+> firmware hears the messages to your callsign in the background, keeps them
+> in flash, acknowledges them and alerts you. Everything else here is
+> upstream F4HWN and builds as before. What the fork adds is described in
+> [OnePress edition: APRS messaging](#onepress-edition-aprs-messaging) and
+> [App/apps/onepress/README.md](App/apps/onepress/README.md). Features marked
+> *(not in the OnePress edition)* stay in the other editions; the OnePress
+> edition leaves them out to make room in the internal flash. Report OnePress
+> problems to [this fork](https://github.com/JamesDavid/uv-k1-k5v3-firmware-custom/issues),
+> not upstream.
+
 # A note for developers who intend to fork this project
 
 This firmware is distributed under the Apache 2.0 License, carrying forward the original copyright of DualTachyon, whose work laid the foundation for the UV-K5 open-source ecosystem.
@@ -47,6 +61,7 @@ Special thanks to Jean-Cyrille F6IWW (3 times), Fabrice 14RC123, Olivier 14RC206
 ## Table of Contents
 
 * [Main features and improvements from F4HWN](#main-features-and-improvements-from-f4hwn)
+* [OnePress edition: APRS messaging](#onepress-edition-aprs-messaging) (this fork)
 * [Main Features from Egzumer](#main-features-from-egzumer)
 * [Manual](#manual)
 * [Compiling and Building from Docker](#compiling-and-Building-from-docker)
@@ -62,12 +77,12 @@ Special thanks to Jean-Cyrille F6IWW (3 times), Fabrice 14RC123, Olivier 14RC206
 Fusion is the generic reference edition for the UV-K1 and UV-K5 V3. It is intended
 for everyday use and is the base inherited by the specialized editions. It includes:
 
-- Fagci's spectrum analyzer,
-- broadcast FM radio and VOX,
+- Fagci's spectrum analyzer, *(not in the OnePress edition)*
+- broadcast FM radio and VOX, *(not in the OnePress edition)*
 - [UV Studio](https://armel.github.io/uvstudio/) with integrated K5Viewer screen mirroring, screenshots and remote keyboard control,
-- advanced RX audio profiles and Audio Scope,
-- automatic RX/TX activity logging with RF Log,
-- Full Watch across VFO A, VFO B and up to two priority channels,
+- advanced RX audio profiles and Audio Scope (Audio Scope *not in the OnePress edition*),
+- automatic RX/TX activity logging with RF Log, *(not in the OnePress edition)*
+- Full Watch across VFO A, VFO B and up to two priority channels, *(not in the OnePress edition)*
 - Multiboot with one protected Main backup and four user firmware slots,
 - independent Multiconfig banks, switchable at runtime through `SetCfg`.
 
@@ -109,6 +124,8 @@ selected slot and its bank (`Main` to `CFG M`, or slot `N` to `CFG N`). Select
 another bank with `SetCfg` again after switching firmware if required.
 
 ### Full Watch
+
+*Not in the OnePress edition: its dual watch is the normal one.*
 
 Full Watch extends the normal dual-watch cycle to monitor:
 
@@ -219,10 +236,12 @@ PolyForm Noncommercial 1.0.0; the rest stays Apache 2.0.
 - Per-channel TX lock.
 - Adjustable RX audio volume.
 - Advanced RX audio profiles for FM and AM reception.
-- Regional frequency-lock profiles for amateur bands, PMR446, FRS, GMRS and MURS.
+- Regional frequency-lock profiles for amateur bands, PMR446, FRS, GMRS and MURS (the PMR446 and GMRS/FRS/MURS TX profiles are not in the OnePress edition).
 - Support for 1600, 2200 and 3500 mAh battery profiles.
 
 ### Spectrum analyzer
+
+*Not in the OnePress edition; the Spectrum3D app remains.*
 
 - Channel names displayed in the spectrum view.
 - Persistent spectrum settings.
@@ -272,12 +291,12 @@ PolyForm Noncommercial 1.0.0; the rest stays Apache 2.0.
 - Manual backlight controls for quickly switching between minimum and maximum brightness.
 - Configurable contrast and inverted-display mode.
 - Configurable navigation layout for the different radio models.
-- Improved power-on message and optional startup logo.
+- Improved power-on message and optional startup logo (the logo *not in the OnePress edition*).
 - System-information pages for:
   - firmware version and build information,
   - battery information,
   - Flash and SRAM usage,
-  - project and documentation QR codes.
+  - project and documentation QR codes *(not in the OnePress edition)*.
 
 ### Audio and transmission controls
 
@@ -288,7 +307,7 @@ PolyForm Noncommercial 1.0.0; the rest stays Apache 2.0.
   - visual,
   - sound and visual.
 - Configurable end-of-transmission alerts using the same modes.
-- Audio Scope during RX and TX.
+- Audio Scope during RX and TX *(not in the OnePress edition)*; the AF Scope app remains.
 - Improved Audio Scope behavior with OnePush PTT, DTMF and the 1750 Hz tone.
 - Configurable automatic deep-sleep timeout.
 - Quick actions for:
@@ -323,6 +342,8 @@ PolyForm Noncommercial 1.0.0; the rest stays Apache 2.0.
 - Fox Hunt and Beacon screens are mirrored to UV Studio's integrated K5Viewer.
 
 ### RF Log
+
+*Not in the OnePress edition.*
 
 - Automatic logging of RX and TX activity when RF Log is enabled.
 - Logs stored in the radio's external Flash memory.
@@ -520,6 +541,8 @@ The default preset is **Fusion**. Available presets are:
 - **Custom**
 - **Fusion**
 - **Service**
+- **OnePress** (this fork: Labs plus the OnePress decoder and APRS messaging,
+  less the features marked above; see [App/apps/onepress/README.md](App/apps/onepress/README.md))
 - **All** (Fusion and Service)
 
 Examples:
@@ -572,6 +595,8 @@ UV Studio combines firmware flashing, calibration maintenance, boot-logo managem
 - Connect your radio to your computer using a compatible USB programming cable (USB-C or Baofeng/Kenwood like double jack USB cable).
 - Make sure your radio is in **DFU mode (flash mode)**.
 - Select an official F4HWN Fusion release from the catalog or load a local `.bin` firmware file.
+  The OnePress edition is not in the catalog: build it (`./compile-firmware.sh OnePress`)
+  and load `build/OnePress/f4hwn.onepress.bin`.
 - Click on `Flash Firmware`, then select the serial port associated with your radio.
 - The progress bar will guide you through the flashing steps.
 
