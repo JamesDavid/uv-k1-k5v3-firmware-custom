@@ -374,7 +374,7 @@ void app_main(const app_api_t *api)
     /* listen for messages: to the station OP APRS last set, saved here, else the boot message's */
     if (!api->rx_station(call, &c[1])) {
         if (c[0] == CFG_MAGIC && c[2] > ' ' && c[2] <= 'Z') { memcpy(call, c + 2, 6); call[6] = 0; c[1] = c[8]; }
-        else { api->boot_callsign(call, sizeof call); c[1] = 0; }
+        else { api->boot_callsign(call, sizeof call); c[1] = 0x10; }   /* SSID 0, acks via WIDE1-1 */
         api->rx_start(call, c[1]);
     }
     while (g.n < APP_OP_KEYS_MAX && g.keys[g.n]) g.n++;

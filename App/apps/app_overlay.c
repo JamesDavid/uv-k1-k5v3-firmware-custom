@@ -49,6 +49,7 @@
 #define APRS_BG_Resume()    ((void)0)
 #define APRS_BG_Tune()      ((void)0)
 #define APRS_BG_AfterTone() ((void)0)
+#define APRS_BG_Service()   ((void)0)
 #endif
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
 #include "app/rxtx_log.h"
@@ -653,6 +654,14 @@ _Static_assert(APP_CFG_OFFSET + APP_CONFIG_LOCAL_MAX <= APP_CFG_OWNER &&
 /* ---- API level 2: time, randomness, read-only assets ---- */
 static uint32_t app_rng_state = 0x2545F491u;
 
+/* The apps wait here between key scans: the background receiver's turn to
+ * file a message and send an ack. */
+static void app_delay_ms(uint32_t ms)
+{
+    APRS_BG_Service();
+    SYSTEM_DelayMs(ms);
+}
+
 static uint32_t app_ticks_ms(void)
 {
     return SCHEDULER_GetTick10ms() * 10u;
@@ -1238,7 +1247,7 @@ static const app_api_t app_api = {
     .blit_line        = ST7565_BlitLine,
     .blit_status      = ST7565_BlitStatusLine,
     .get_key          = app_get_key,
-    .delay_ms         = SYSTEM_DelayMs,
+    .delay_ms         = app_delay_ms,
     .play_tone        = app_play_tone,
     .led              = app_led,
     .print_normal     = UI_PrintStringSmallNormal,
@@ -1351,6 +1360,8 @@ static const app_api_t app_api = {
     .rx_msg              = APRS_BG_Msg,
     .rx_unread           = APRS_BG_Unread,
     .rx_stats            = APRS_BG_Stats,
+    .rx_msgid            = APRS_BG_MsgId,
+    .rx_delivered        = APRS_BG_Delivered,
 #endif
 };
 

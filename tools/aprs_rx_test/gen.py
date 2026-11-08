@@ -28,6 +28,14 @@ SCENARIOS = {
     "one": [("W1ABC-9", ("WIDE1-1", "WIDE2-1"), ":KE7AQA-7 :Where are you?{12")],
     # to the simulator's station (tools/onepress_sim: the boot callsign N0CALL, no SSID)
     "sim": [("W1ABC-9", ("WIDE1-1", "WIDE2-1"), ":N0CALL   :Where are you?{12")],
+    # the ack of the simulator's first message (number 1), and a rejection of another
+    "simack": [("W1ABC-9", ("WIDE1-1",), ":N0CALL   :ack1")],
+    "simrej": [("W1ABC-9", ("WIDE1-1",), ":N0CALL   :rej1")],
+    # an answer format the receiver must not take for a message, then a message that starts like one
+    "acks": [
+        ("W1ABC-9", ("WIDE1-1",), ":KE7AQA-7 :ack12}"),
+        ("W1ABC-9", ("WIDE1-1",), ":KE7AQA   :acknowledged, thanks{5"),
+    ],
 }
 
 

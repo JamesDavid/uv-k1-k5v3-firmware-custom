@@ -34,7 +34,11 @@ int main(int argc, char **argv)
         n++;
         if (skip) { skip--; continue; }
         aprs_rx_sample((uint16_t)(b[0] | b[1] << 8));
-        if (!(n % 480)) aprs_rx_poll();          /* the main loop, every 50 ms */
+        if (!(n % 480)) {                         /* the main loop, every 50 ms */
+            aprs_rx_poll();
+            char to[10], id[6], as[10];
+            if (aprs_rx_ack_due(to, id, as)) printf("ack due: %s>%s ack%s\n", as, to, id);
+        }
     }
     fclose(f);
     aprs_rx_poll();

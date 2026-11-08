@@ -56,7 +56,10 @@ static aprs_msg_t inbox[APRS_RX_INBOX];
 static uint8_t nInbox;
 static char me[10], meBase[10];          /* addressees matched: "CALL-SSID", "CALL", padded to 9 */
 static aprs_msg_t pend;                  /* a message to this station, for aprs_rx_poll */
-static volatile uint8_t pendFull;
+static volatile uint8_t pendFull, pendBase;   /* pendBase: sent to CALL, not CALL-SSID */
+static struct { char to[10], id[6], as[10]; bool due; } ack;   /* the ack to send */
+static uint8_t msgId, msgHash, delivered;     /* the last number given, its text's hash */
+static volatile uint8_t heard;                /* a heard ack (1) or rej (2) for msgId, from the interrupt */
 uint16_t aprs_rx_frames;
 
 static uint8_t putCall(char *o, const char *call, uint8_t ssid)
@@ -99,6 +102,13 @@ aprs_msg_t *aprs_rx_poll(void)
 {
     aprs_msg_t *m = 0;
     if (!pendFull) return 0;
+    if (pend.id[0]) {                    /* numbered: ack it, a repeat too */
+        memcpy(ack.to, pend.from, sizeof ack.to);
+        memcpy(ack.id, pend.id, sizeof ack.id);
+        memcpy(ack.as, pendBase ? meBase : me, sizeof ack.as);
+        for (uint8_t i = 9; i && ack.as[i - 1] == ' '; i--) ack.as[i - 1] = 0;
+        ack.due = true;
+    }
     if (!nInbox || strcmp(inbox[0].from, pend.from) || strcmp(inbox[0].text, pend.text)) {
         pend.unread = 1;
         aprs_rx_put(&pend);
@@ -106,6 +116,38 @@ aprs_msg_t *aprs_rx_poll(void)
     }
     pendFull = 0;
     return m;
+}
+
+bool aprs_rx_ack_due(char *to, char *id, char *as)
+{
+    if (!ack.due) return false;
+    memcpy(to, ack.to, sizeof ack.to);
+    memcpy(id, ack.id, sizeof ack.id);
+    memcpy(as, ack.as, sizeof ack.as);
+    ack.due = false;
+    return true;
+}
+
+void aprs_rx_seed(uint8_t n) { msgId = (uint8_t)(n % 99u); }
+
+uint8_t aprs_rx_msgid(const char *to, const char *text)
+{
+    uint8_t h = 0x5A;
+    for (const char *c = to; *c; c++) h = (uint8_t)((h << 1 | h >> 7) ^ (uint8_t)*c);
+    h ^= 0xA5;
+    for (const char *c = text; *c; c++) h = (uint8_t)((h << 1 | h >> 7) ^ (uint8_t)*c);
+    if (!msgId || h != msgHash) {
+        msgId = (uint8_t)(msgId % 99u + 1u);
+        msgHash = h;
+        delivered = heard = 0;
+    }
+    return msgId;
+}
+
+uint8_t aprs_rx_delivered(void)
+{
+    if (heard) delivered = heard;
+    return delivered;
 }
 
 uint8_t aprs_rx_count(void) { return nInbox; }
@@ -133,7 +175,18 @@ static void frame(const uint8_t *f, uint8_t n)
     const uint8_t *info = f + e + 3, *end = f + n - 2;
     if (end - info < 11 || info[0] != ':' || info[10] != ':') return;
     if (memcmp(info + 1, me, 9) && memcmp(info + 1, meBase, 9)) return;
+    const uint8_t *t = info + 11;
+    if (end - t >= 4 && (t[0] == 'a' || t[0] == 'r') && t[1] == (t[0] == 'a' ? 'c' : 'e') &&
+        t[2] == (t[0] == 'a' ? 'k' : 'j')) {       /* "ack12", "rej12" (or "ack12}..."): an answer */
+        uint8_t v = 0, i = 3;
+        while (t + i < end && t[i] >= '0' && t[i] <= '9' && i < 6u) v = (uint8_t)(v * 10u + (t[i++] - '0'));
+        if (i > 3u && (t + i == end || t[i] == '}')) {
+            if (msgId && v == msgId) heard = t[0] == 'a' ? 1u : 2u;
+            return;
+        }
+    }
     memset(&pend, 0, sizeof pend);
+    pendBase = memcmp(info + 1, me, 9) != 0;
     uint8_t o = 0;
     for (uint8_t i = 7; i < 13u; i++) if (f[i] >> 1 != ' ') pend.from[o++] = (char)(f[i] >> 1);
     uint8_t ssid = (uint8_t)((f[13] >> 1) & 15u);
@@ -142,7 +195,6 @@ static void frame(const uint8_t *f, uint8_t n)
         if (ssid >= 10u) { pend.from[o++] = '1'; ssid -= 10u; }
         pend.from[o++] = (char)('0' + ssid);
     }
-    const uint8_t *t = info + 11;
     o = 0;
     while (t < end && *t != '{' && o < APRS_RX_TEXT) { uint8_t c = *t++; pend.text[o++] = (char)(c < ' ' || c > '~' ? '?' : c); }
     if (t < end && *t == '{') for (o = 0, t++; t < end && o < 5u && *t != '}'; ) pend.id[o++] = (char)*t++;

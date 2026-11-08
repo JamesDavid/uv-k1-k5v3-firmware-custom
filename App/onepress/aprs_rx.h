@@ -46,4 +46,19 @@ uint8_t aprs_rx_unread(void);
 /* Frames with a good FCS seen, for any station (a test and debug count). */
 extern uint16_t aprs_rx_frames;
 
+/* ---- acknowledgements ----
+ * A message to this station with a number ("{12") asks for an ack, every time
+ * it is heard (the sender repeats it until one gets through). aprs_rx_poll
+ * notes the last one; aprs_rx_ack_due hands it over once (sender, number, and
+ * the addressee it was sent to, CALL-SSID or CALL: the ack comes from that).
+ * "ack12" / "rej12" to this station answer a message sent with
+ * aprs_rx_msgid's number: aprs_rx_delivered tells. */
+bool aprs_rx_ack_due(char *to, char *id, char *as);   /* 10, 6, 10 bytes */
+/* The number to send text to `to` with, "1".."99" as 1..99: the last one again
+ * for the same addressee and text (a repeat), else the next. Starts after seed. */
+uint8_t aprs_rx_msgid(const char *to, const char *text);
+void aprs_rx_seed(uint8_t n);
+/* For the last number given: 0 waiting (or none), 1 acked, 2 rejected. */
+uint8_t aprs_rx_delivered(void);
+
 #endif

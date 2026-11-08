@@ -70,7 +70,7 @@ static void draw(void)
     if (A->rx_station(call, &ssid)) {
         o = put(g.str, "LISTENING FOR ");
         o = put(o, call);
-        if (ssid) { *o++ = '-'; o = A->append_u32(o, ssid); }
+        if (ssid & 15u) { *o++ = '-'; o = A->append_u32(o, ssid & 15u); }   /* bits 4-5: the ack path */
     } else o = put(g.str, "NOT LISTENING: OPEN ONEPRESS");
     tiny(38, o);
     /* the receiver at work: samples a second (9600), packets from anyone, the

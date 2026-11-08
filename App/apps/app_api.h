@@ -56,7 +56,8 @@
  *   4  OnePress text entry (APP_CAP_ONEPRESS): op_open, op_decode, op_render,
  *      op_guesses, op_choice, op_word and the op_keys / op_text buffers
  *   5  background APRS message receiver (APP_CAP_APRS_INBOX): rx_start,
- *      rx_station, rx_count, rx_msg, rx_unread, rx_stats */
+ *      rx_station, rx_count, rx_msg, rx_unread, rx_stats, rx_msgid,
+ *      rx_delivered (acks) */
 #define APP_ABI_MAJOR  1u
 #define APP_API_LEVEL  5u
 
@@ -517,8 +518,12 @@ typedef struct app_api {
      * transmits or captures the RX audio itself (af_capture_open). It takes
      * ~9 % of the CPU and samples from a timer, so an app's timing is
      * unaffected beyond that; the speaker stays off.
-     * rx_start starts it for this callsign (6 characters at most) and SSID,
-     * or changes the station it listens for; the inbox is kept. rx_station gives the
+     * rx_start starts it for this callsign (6 characters at most) and SSID
+     * (bits 0-3; bits 4-5 the path its acks take: 0 direct, 1 WIDE1-1,
+     * 2 WIDE1-1,WIDE2-1), or changes the station it listens for; the inbox
+     * is kept. A message with a number ("{12") is acknowledged by the
+     * receiver itself, on the TX VFO, ~1.5 s later, while the app waits in
+     * delay_ms. rx_station gives the
      * station listened for (call: 7 bytes) and returns false when the receiver
      * is stopped. rx_msg(n) is a message, 0 the newest, NULL past the last;
      * an app clears its unread flag once shown. */
@@ -528,6 +533,11 @@ typedef struct app_api {
     app_rx_msg_t *(*rx_msg)(uint8_t n);
     uint8_t  (*rx_unread)(void);
     void     (*rx_stats)(app_rx_stats_t *s);
+    /* The message number (1-99) to send text to `to` with, as "{12": the same
+     * one again for the same addressee and text. rx_delivered, for the last
+     * number given: 0 waiting, 1 acked, 2 rejected. */
+    uint8_t  (*rx_msgid)(const char *to, const char *text);
+    uint8_t  (*rx_delivered)(void);
 } app_api_t;
 
 /* Serial ports and serial_ctl state bits (API level 3). */
@@ -552,7 +562,7 @@ _Static_assert(offsetof(app_api_t, handoff) == 356u &&
                offsetof(app_api_t, vfo_stage) == 392u &&
                offsetof(app_api_t, op_open) == 396u &&
                offsetof(app_api_t, rx_start) == 428u &&
-               sizeof(app_api_t) == 452u,
+               sizeof(app_api_t) == 460u,
                "app_api_t is append-only: every edition shares this layout");
 #endif
 

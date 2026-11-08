@@ -22,6 +22,7 @@
 #include "apps/app_api.h"
 #include "app/onepress_svc.h"
 #include "onepress/aprs_rx.h"
+#include "onepress/aprs_tx.h"
 
 void onepress_main(const app_api_t *api);
 void opaprs_main(const app_api_t *api);
@@ -126,8 +127,8 @@ static uint8_t rx_ssid;
 static void rx_feed(void)
 {
     long upto = now_ms() < audio_at ? 0 : (long)((uint64_t)(now_ms() - audio_at) * 96 / 10);
-    if (upto > audio_n) upto = audio_n;
-    for (; audio_fed < upto; audio_fed++) if (rx_state == 1) aprs_rx_sample(audio[audio_fed]);
+    /* after the recording, silence (mid-scale), as a radio keeps sampling */
+    for (; audio_fed < upto; audio_fed++) if (rx_state == 1) aprs_rx_sample(audio_fed < audio_n ? audio[audio_fed] : 2048);
 }
 static void rx_start(const char *call, uint8_t ssid)
 {
@@ -135,8 +136,9 @@ static void rx_start(const char *call, uint8_t ssid)
     for (int i = 0; i < 6 && call[i]; i++) c[i] = call[i];
     if (!c[0]) return;
     rx_feed();
-    if (memcmp(c, rx_call, 7) || ssid != rx_ssid) { aprs_rx_init(c, ssid); memcpy(rx_call, c, 7); rx_ssid = ssid; }
-    if (!rx_state) printf("  [RX listening for %s-%u]\n", rx_call, rx_ssid);
+    if (memcmp(c, rx_call, 7) || (ssid & 15) != (rx_ssid & 15)) { aprs_rx_init(c, ssid & 15); memcpy(rx_call, c, 7); }
+    rx_ssid = ssid;
+    if (!rx_state) printf("  [RX listening for %s-%u]\n", rx_call, rx_ssid & 15);
     rx_state = 1;
 }
 static bool rx_station(char *call, uint8_t *ssid) { memcpy(call, rx_call, 7); *ssid = rx_ssid; return rx_state != 0; }
@@ -146,7 +148,27 @@ static uint8_t rx_unread(void) { rx_feed(); aprs_rx_poll(); return aprs_rx_unrea
 static void rx_stats(app_rx_stats_t *s) { rx_feed(); memset(s, 0, sizeof *s); s->samples = (uint32_t)audio_fed; s->frames = aprs_rx_frames; s->lo = 1900; s->hi = 2200; s->state = rx_state; }
 static void play_tone(uint16_t hz, uint16_t ms) { printf("  [beep %u Hz, %u ms]\n", hz, ms); cyc += (uint64_t)ms * 48000u; }
 
-static void delay_ms(uint32_t ms) { cyc += (uint64_t)ms * 48000u; rx_feed(); blit(); if (now_ms() > script_end) longjmp(done, 1); }
+static void print_frame(const char *what, const uint8_t *frame, int nf);
+static uint8_t rx_msgid(const char *to, const char *text) { return aprs_rx_msgid(to, text); }
+static uint8_t rx_delivered(void) { rx_feed(); return aprs_rx_delivered(); }
+/* As APRS_BG_Service: an ack due goes out 1.5 s later (the resident AFSK is the
+ * firmware's; its frame, built by the same aprs_tx_frame, is printed). */
+static struct { char to[10], id[6], as[10]; uint32_t at; int pending; } ackq;
+static void service(void)
+{
+    if (rx_state != 1) return;
+    rx_feed();
+    aprs_rx_poll();
+    if (aprs_rx_ack_due(ackq.to, ackq.id, ackq.as)) { ackq.at = now_ms() + 1500; ackq.pending = 1; }
+    if (!ackq.pending || now_ms() < ackq.at) return;
+    if (aprs_rx_busy()) { ackq.at = now_ms() + 300; return; }
+    ackq.pending = 0;
+    uint8_t f[APRS_TX_FRAME_MAX];
+    char text[10] = "ack";
+    memcpy(text + 3, ackq.id, 6);
+    print_frame("ACK sent", f, aprs_tx_frame(f, ackq.as, (rx_ssid >> 4) & 3, ackq.to, text));
+}
+static void delay_ms(uint32_t ms) { service(); cyc += (uint64_t)ms * 48000u; rx_feed(); blit(); if (now_ms() > script_end) longjmp(done, 1); }
 static void nothing(void) {}
 static void nothing_b(bool b) { (void)b; }
 static void draw_frequency(uint32_t f, uint8_t x, uint8_t line) { char s[20]; snprintf(s, sizeof s, "%u.%05u", f / 100000, f % 100000); add_row(line, x, s); }
@@ -217,6 +239,7 @@ static void tx_mute(bool on)                /* MCW: the tone keyed on and off */
         morse_on = 1;
     }
 }
+static void print_frame(const char *what, const uint8_t *frame, int nf);
 static void decode_afsk(void)
 {
     if (n_tones < 16) return;
@@ -242,6 +265,11 @@ static void decode_afsk(void)
         if (++nbit == 8) { frame[nf++] = cur; cur = 0; nbit = 0; if (nf == 400) break; }
     }
     if (nf < 18) { printf("  [AFSK: no frame]\n"); return; }
+    print_frame("AFSK decoded", frame, nf);
+}
+/* A frame as TNC2 text, its FCS checked. */
+static void print_frame(const char *what, const uint8_t *frame, int nf)
+{
     uint16_t crc = 0xFFFF;
     for (int k = 0; k < nf - 2; k++) {
         crc ^= frame[k];
@@ -259,7 +287,7 @@ static void decode_afsk(void)
     *o++ = ':';
     for (int k = a + 9; k < nf - 2; k++) *o++ = (char)frame[k];
     *o = 0;
-    printf("  [AFSK decoded, %d bytes, FCS %s] %s\n", nf, ok ? "ok" : "BAD", tnc);
+    printf("  [%s, %d bytes, FCS %s] %s\n", what, nf, ok ? "ok" : "BAD", tnc);
 }
 static void tx_end(void)
 {
@@ -287,7 +315,7 @@ static app_api_t api = {
     .op_open = OP_Open, .op_decode = OP_Decode, .op_render = OP_Render, .op_guesses = OP_Guesses,
     .op_choice = OP_Choice, .op_word = OP_Word, .op_keys = gOpKeys, .op_text = gOpText,
     .play_tone = play_tone, .rx_start = rx_start, .rx_station = rx_station, .rx_count = rx_count,
-    .rx_msg = rx_msg, .rx_unread = rx_unread, .rx_stats = rx_stats,
+    .rx_msg = rx_msg, .rx_unread = rx_unread, .rx_stats = rx_stats, .rx_msgid = rx_msgid, .rx_delivered = rx_delivered,
 };
 
 int main(int argc, char **argv)

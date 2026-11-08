@@ -8,6 +8,9 @@
  * the af_capture service does. The battery shares the ADC: the interrupt
  * reads it about once a second, between frames.
  * The inbox is kept in external flash too: aprs_store.c.
+ * Numbered messages are acknowledged from here: APRS_BG_Service, called while
+ * an app waits, keys the ack ~1.5 s after the message once the channel is
+ * quiet, on the TX VFO, with the APRS TX app's AFSK (as OP APRS).
  */
 #include <stddef.h>
 #include <string.h>
@@ -17,7 +20,12 @@
 #include "audio.h"
 #include "driver/bk4819.h"
 #include "app/aprs_store.h"
+#include "frequencies.h"
+#include "helper/battery.h"
 #include "onepress/aprs_rx.h"
+#include "onepress/aprs_tx.h"
+#include "radio.h"
+#include "scheduler.h"
 
 _Static_assert(sizeof(app_rx_msg_t) == sizeof(aprs_msg_t) && APP_RX_TEXT_MAX == APRS_RX_TEXT &&
                offsetof(app_rx_msg_t, text) == offsetof(aprs_msg_t, text) &&
@@ -32,6 +40,14 @@ _Static_assert(sizeof(app_rx_msg_t) == sizeof(aprs_msg_t) && APP_RX_TEXT_MAX == 
 #define EXTSEL_SW       (ADC_CR2_EXTSEL_2 | ADC_CR2_EXTSEL_1 | ADC_CR2_EXTSEL_0)
 #define DAC_BIAS        ((1u << 0) | (1u << 1) | (1u << 2) | (7u << 3))  /* EN1 BOFF1 TEN1 TSEL1=111 */
 #define BATTERY_EVERY   9600u                                          /* samples: a second */
+#define ACK_DELAY_MS    1500u   /* after the message: digipeaters repeat it first */
+#define ACK_RETRY_MS    300u    /* a frame on the air: later */
+#define CYC_PER_BIT     (48000000u / 1200u)
+#define F_MARK          12389u  /* REG_71 tone words, as APRS TX */
+#define F_SPACE         22714u
+#define AFSK_LVL        66u
+#define TXDELAY_FLAGS   40u
+#define TAIL_FLAGS      3u
 
 enum { OFF, RUNNING, PAUSED };
 
@@ -42,7 +58,9 @@ static volatile uint8_t state;
 static volatile uint16_t battery, sinceBattery, lo = 0xFFFFu, hi;
 static volatile uint32_t samples;
 static char station[7];
-static uint8_t stationSsid;
+static uint8_t stationSsid;             /* SSID, path << 4 for the acks */
+static struct { char to[10], id[6], as[10]; uint32_t at; bool pending; } ackq;
+static bool seeded;
 
 /* One software conversion of the battery channel, then back to the audio.
  * Called with the trigger stopped or from the interrupt, between samples. */
@@ -150,6 +168,103 @@ void APRS_BG_AfterTone(void)
     APRS_BG_Tune();
 }
 
+/* ---- the ack: AFSK on the TX VFO ---- */
+static struct { uint32_t prev, cyc, next; uint8_t space, ones; } afsk;
+static uint32_t cycles(void)
+{
+    const uint32_t v = SysTick->VAL;
+    afsk.cyc += v <= afsk.prev ? afsk.prev - v : afsk.prev + (SysTick->LOAD + 1u - v);
+    afsk.prev = v;
+    return afsk.cyc;
+}
+static void afskTone(void)
+{
+    BK4819_WriteRegister(0x71, (uint16_t)(afsk.space ? F_SPACE : F_MARK));
+    BK4819_WriteRegister(0x70, (uint16_t)(0x8000u | (AFSK_LVL << 8)));
+}
+static void afskBit(uint8_t b)
+{
+    while ((int32_t)(cycles() - afsk.next) < 0) {}
+    if (!b) { afsk.space ^= 1u; afskTone(); }
+    afsk.next += CYC_PER_BIT;
+}
+static void afskByte(uint8_t v, bool stuff)
+{
+    for (uint8_t i = 0; i < 8u; i++, v >>= 1) {
+        const uint8_t b = v & 1u;
+        afskBit(b);
+        if (stuff) {
+            if (!b) afsk.ones = 0;
+            else if (++afsk.ones == 5u) { afskBit(0); afsk.ones = 0; }
+        }
+    }
+}
+
+/* As the apps' tx_state: TX allowed on the TX VFO, battery fine, FM. */
+static bool txAllowed(void)
+{
+    if (TX_freq_check(gTxVfo->pTX->Frequency) != 0 && gTxVfo->TX_LOCK) return false;
+    if (gBatteryDisplayLevel == 0 || gBatteryDisplayLevel > 6) return false;
+    return gTxVfo->Modulation == MODULATION_FM;
+}
+
+static void sendAck(void)
+{
+    uint8_t f[APRS_TX_FRAME_MAX];
+    char text[10] = "ack";
+    memcpy(text + 3, ackq.id, 6);
+    const uint8_t n = aprs_tx_frame(f, ackq.as, (uint8_t)((stationSsid >> 4) & 3u), ackq.to, text);
+    hwStop();                                       /* the interrupt off: even bits */
+    RADIO_SetTxParameters();
+    const uint16_t io = BK4819_ReadRegister(0x33);  /* the red LED, as the apps light it */
+    if (io & 0x20u) BK4819_WriteRegister(0x33, (uint16_t)(io | 1u));
+    BK4819_WriteRegister(0x51, 0);                  /* no CTCSS/DCS under the AFSK */
+    BK4819_TransmitTone(false, 1200);
+    afsk.space = 0;
+    afskTone();
+    afsk.prev = SysTick->VAL;
+    afsk.cyc = 0;
+    afsk.next = CYC_PER_BIT;
+    for (uint8_t i = 0; i < TXDELAY_FLAGS; i++) afskByte(0x7E, false);
+    afsk.ones = 0;
+    for (uint8_t i = 0; i < n; i++) afskByte(f[i], true);
+    for (uint8_t i = 0; i < TAIL_FLAGS; i++) afskByte(0x7E, false);
+    while ((int32_t)(cycles() - afsk.next) < 0) {}
+    BK4819_EnterTxMute();
+    BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false);
+    RADIO_SetupRegisters(true);
+    hwStart();
+    APRS_BG_Tune();
+}
+
+void APRS_BG_Service(void)
+{
+    if (state != RUNNING)
+        return;
+    APRS_STORE_Sync();
+    const uint32_t now = SCHEDULER_GetTick10ms() * 10u;
+    if (aprs_rx_ack_due(ackq.to, ackq.id, ackq.as)) {
+        ackq.at = now + ACK_DELAY_MS;
+        ackq.pending = true;
+    }
+    if (!ackq.pending || (int32_t)(now - ackq.at) < 0)
+        return;
+    if (aprs_rx_busy()) { ackq.at = now + ACK_RETRY_MS; return; }
+    ackq.pending = false;
+    if (txAllowed())
+        sendAck();
+}
+
+uint8_t APRS_BG_MsgId(const char *to, const char *text)
+{
+    if (!seeded) {                                  /* a number unlikely to repeat the last session's */
+        aprs_rx_seed((uint8_t)(SysTick->VAL ^ SCHEDULER_GetTick10ms()));
+        seeded = true;
+    }
+    return aprs_rx_msgid(to, text);
+}
+uint8_t APRS_BG_Delivered(void) { return aprs_rx_delivered(); }
+
 void APRS_BG_Start(const char *call, uint8_t ssid)
 {
     char c[7] = { 0 };
@@ -159,12 +274,12 @@ void APRS_BG_Start(const char *call, uint8_t ssid)
     if (state == RUNNING)
         hwStop();
     APRS_STORE_Sync();
-    if (memcmp(c, station, 7) || ssid != stationSsid) {   /* another station: the inbox stays */
-        aprs_rx_init(c, ssid);
+    if (memcmp(c, station, 7) || (ssid & 15u) != (stationSsid & 15u)) {   /* another station: the inbox stays */
+        aprs_rx_init(c, ssid & 15u);
         samples = 0;
         memcpy(station, c, 7);
-        stationSsid = ssid;
     }
+    stationSsid = ssid;
     hwStart();
     state = RUNNING;
     APRS_BG_Tune();
