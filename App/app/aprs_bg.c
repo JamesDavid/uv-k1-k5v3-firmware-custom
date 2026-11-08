@@ -11,6 +11,9 @@
  * Numbered messages are acknowledged from here: APRS_BG_Service, called while
  * an app waits, keys the ack ~1.5 s after the message once the channel is
  * quiet, on the TX VFO, with the APRS TX app's AFSK (as OP APRS).
+ * Out of the apps it keeps listening on the main screen (APRS_BG_Main), with
+ * the radio's own audio and squelch: it hears what the squelch lets through.
+ * It pauses while the radio transmits or sleeps (power save).
  */
 #include <stddef.h>
 #include <string.h>
@@ -26,6 +29,9 @@
 #include "onepress/aprs_tx.h"
 #include "radio.h"
 #include "scheduler.h"
+#include "audio.h"
+#include "functions.h"
+#include "misc.h"
 
 _Static_assert(sizeof(app_rx_msg_t) == sizeof(aprs_msg_t) && APP_RX_TEXT_MAX == APRS_RX_TEXT &&
                offsetof(app_rx_msg_t, freq) == offsetof(aprs_msg_t, freq) &&
@@ -61,7 +67,8 @@ static volatile uint32_t samples;
 static char station[7];
 static uint8_t stationSsid;             /* SSID, path << 4 for the acks */
 static struct { char to[10], id[6], as[10]; uint32_t at, freq; bool pending; } ackq;
-static bool seeded;
+static bool seeded, inApp;
+static uint8_t unreadShown;
 
 /* One software conversion of the battery channel, then back to the audio.
  * Called with the trigger stopped or from the interrupt, between samples. */
@@ -157,6 +164,8 @@ void APRS_BG_Tune(void)
     if (state != RUNNING)
         return;
     aprs_rx_freq = gRxVfo->pRX->Frequency;         /* the messages carry it */
+    if (!inApp)
+        return;                                     /* the main screen: its own audio */
     BK4819_SetAF(BK4819_AF_FM);                     /* the RX audio out of the BK4829 ... */
     AUDIO_AudioPathOff();                           /* ... and the speaker off */
 }
@@ -286,10 +295,56 @@ void APRS_BG_Start(const char *call, uint8_t ssid)
         memcpy(station, c, 7);
     }
     stationSsid = ssid;
+    APRS_STORE_SetStation(c, ssid);                 /* for the main screen, after power on */
     hwStart();
     state = RUNNING;
     APRS_BG_Tune();
 }
+
+void APRS_BG_Apps(bool on)
+{
+    inApp = on;
+    if (on)
+        return;
+    if (APRS_STORE_Loc()->flags & APP_LOC_F_NO_MAIN)
+        APRS_BG_Stop();
+    else
+        APRS_BG_Tune();                             /* the frequency the main screen tuned */
+}
+
+void APRS_BG_Function(uint8_t f)
+{
+    if (f == FUNCTION_TRANSMIT || f == FUNCTION_POWER_SAVE) APRS_BG_Pause();
+    else if (!inApp) APRS_BG_Resume();              /* in the apps, their tx_end resumes */
+}
+
+void APRS_BG_Main(void)
+{
+    if (inApp)
+        return;
+    if (state == OFF) {                             /* after power on: the station saved */
+        char c[7];
+        uint8_t ssid;
+        if ((APRS_STORE_Loc()->flags & APP_LOC_F_NO_MAIN) || !APRS_STORE_Station(c, &ssid))
+            return;
+        APRS_BG_Start(c, ssid);
+        unreadShown = aprs_rx_unread();
+        if (gCurrentFunction == FUNCTION_TRANSMIT || gCurrentFunction == FUNCTION_POWER_SAVE)
+            APRS_BG_Pause();
+    }
+    if (state == RUNNING)
+        aprs_rx_freq = gRxVfo->pRX->Frequency;     /* dual watch, a new frequency: where it hears */
+    APRS_BG_Service();
+    const uint8_t u = aprs_rx_unread();
+    if (u != unreadShown) {
+        if (u > unreadShown)
+            AUDIO_PlayBeep(BEEP_880HZ_60MS_TRIPLE_BEEP);
+        unreadShown = u;
+        gUpdateStatus = true;
+    }
+}
+
+uint8_t APRS_BG_UnreadNow(void) { return state == OFF ? 0u : aprs_rx_unread(); }
 
 void APRS_BG_Stop(void)
 {

@@ -6,7 +6,8 @@
  * Keys: UP/DOWN the next / previous message · MENU or PTT reply: OnePress,
  *   with the sender as the addressee of OP APRS · EXIT back to OnePress (or to
  *   the menu when started from it) · * the receiver's diagnostics line on/off
- *   (saved).
+ *   (saved) · F listening on the main screen too (ALWAYS) or only in these
+ *   apps (saved with the locations).
  * The receiver keeps listening while this app is open (API level 5).
  */
 
@@ -71,6 +72,7 @@ static void draw(void)
         o = put(g.str, "LISTENING FOR ");
         o = put(o, call);
         if (ssid & 15u) { *o++ = '-'; o = A->append_u32(o, ssid & 15u); }   /* bits 4-5: the ack path */
+        if (!(A->loc()->flags & APP_LOC_F_NO_MAIN)) o = put(o, " ALWAYS");
     } else o = put(g.str, "NOT LISTENING: OPEN ONEPRESS");
     tiny(38, o);
     /* the receiver at work: samples a second (9600), packets from anyone, the
@@ -109,6 +111,9 @@ static void keys(void)
         uint8_t n = 0;
         while (from[n]) n++;
         if (A->handoff("OnePress", from, (uint8_t)(n + 1u))) g.running = false;
+    } else if (key == APP_KEY_F) {               /* the main screen too, or not */
+        A->loc()->flags ^= APP_LOC_F_NO_MAIN;
+        A->loc_save();
     } else if (key == APP_KEY_STAR) {
         g.diag = g.diag == 1u ? 0u : 1u;
     } else if (d && g.count) {

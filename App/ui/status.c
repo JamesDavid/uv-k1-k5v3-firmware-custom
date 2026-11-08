@@ -46,6 +46,9 @@
 #endif
 #include "ui/ui.h"
 #include "ui/status.h"
+#ifdef ENABLE_FEAT_ONEPRESS
+    #include "app/aprs_bg.h"
+#endif
 
 #ifdef ENABLE_FEAT_F4HWN_RX_TX_TIMER
 #ifndef ENABLE_FEAT_F4HWN_DEBUG
@@ -365,6 +368,19 @@ void UI_DisplayStatus()
     if (src) {
         memcpy(line + x + 1, src, size);
     }
+
+#ifdef ENABLE_FEAT_ONEPRESS
+    {   // APRS messages unread (OnePress: OP Inbox reads them): an envelope and their count
+        const uint8_t unread = APRS_BG_UnreadNow();
+        if (unread) {
+            static const uint8_t envelope[7] = { 0x7E, 0x46, 0x4A, 0x52, 0x4A, 0x46, 0x7E };
+            memcpy(line + 80, envelope, sizeof envelope);
+            str[0] = (char)('0' + unread);
+            str[1] = '\0';
+            GUI_DisplaySmallest(str, 89, 1, true, true);
+        }
+    }
+#endif
 
     UI_DrawStatusBattery(line, str);
 

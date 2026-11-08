@@ -182,12 +182,17 @@ typedef struct {
 
 /* Saved locations (loc): 4 slots in 1/6000 degree (0.01 minute, APRS's
  * resolution), north and east positive, APP_LOC_NONE when not set; attach,
- * the slot OP APRS sends after a message (1-4, 0 none). */
-#define APP_LOC_NONE  0x7FFFFFFF
+ * the slot OP APRS sends after a message (1-4, 0 none). flags: the receiver's
+ * settings saved with them. */
+#define APP_LOC_NONE      0x7FFFFFFF
+#define APP_LOC_F_NO_MAIN 0x01u   /* the receiver off on the main screen (on: it
+                                     keeps listening there, the status bar shows
+                                     new messages) */
 typedef struct {
     int32_t  lat[4], lon[4];
     uint8_t  attach;
-    uint8_t  pad[3];
+    uint8_t  flags;
+    uint8_t  pad[2];
 } app_loc_t;
 
 /* The receiver at work (rx_stats): for a diagnostics line. */
@@ -526,7 +531,9 @@ typedef struct app_api {
      * addressed to the station (CALL-SSID, or CALL), newest first, in external
      * flash at APP_RX_INBOX_ADDR too, read or not, so they outlive power off
      * (and an app's unread flags it clears). It runs from rx_start until the chain of
-     * hand-offs ends (the menu or the main screen), and pauses while the app
+     * hand-offs ends (the menu or the main screen; there too unless
+     * APP_LOC_F_NO_MAIN, from power on once a station was set, while the
+     * squelch is open), and pauses while the app
      * transmits or captures the RX audio itself (af_capture_open). It takes
      * ~9 % of the CPU and samples from a timer, so an app's timing is
      * unaffected beyond that; the speaker stays off.

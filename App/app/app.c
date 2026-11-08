@@ -48,6 +48,9 @@
 #endif
 #include "py32f0xx.h"
 #include "audio.h"
+#ifdef ENABLE_FEAT_ONEPRESS
+    #include "app/aprs_bg.h"
+#endif
 #include "board.h"
 #ifdef ENABLE_FEAT_F4HWN_SLEEP
     // #include "bsp/dp32g030/pwmplus.h"
@@ -1866,6 +1869,10 @@ void CheckKeys(void)
 void APP_TimeSlice10ms(void)
 {
     gNextTimeslice = false;
+
+#ifdef ENABLE_FEAT_ONEPRESS
+    APRS_BG_Main();                     /* APRS messages on the main screen */
+#endif
 
     SETTINGS_SaveVfoIndicesFlush();
 

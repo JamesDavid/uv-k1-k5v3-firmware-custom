@@ -27,6 +27,15 @@ void APRS_BG_Pause(void);
 void APRS_BG_Resume(void);
 void APRS_BG_Tune(void);
 void APRS_BG_AfterTone(void);
+/* The loader: a chain of apps starts (true) or ends (false: on the main
+ * screen the receiver keeps going unless APP_LOC_F_NO_MAIN). */
+void APRS_BG_Apps(bool on);
+/* FUNCTION_Select: paused while the radio transmits or sleeps. */
+void APRS_BG_Function(uint8_t function);
+/* The main loop (10 ms): started after power on, acks, a new message beeped
+ * and shown on the status bar (APRS_BG_UnreadNow). */
+void APRS_BG_Main(void);
+uint8_t APRS_BG_UnreadNow(void);
 /* While it runs it owns the ADC: the battery, read between packets. */
 bool APRS_BG_Battery(uint16_t *voltage);
 

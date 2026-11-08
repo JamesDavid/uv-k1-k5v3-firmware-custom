@@ -78,8 +78,17 @@ and SSID set in OP APRS (`KE7AQA-7`), or to the bare callsign (`KE7AQA`). A
 new one beeps and shows `1 MSG` at the top of OnePress; `MENU` `4` reads it.
 The last 3 are kept in external flash (the sector after the word model), read
 or not, so they are still there after the radio is turned off. The speaker
-stays off; the receiver stops on the main screen and while an app transmits.
+stays off in the apps; the receiver pauses while an app transmits.
 To read all APRS traffic, use the APRS RX app.
+
+It keeps listening on the main screen too, from power on once a station has
+been set (`ALWAYS` in OP Inbox; `F` there turns it off and on). There it uses
+the radio's own audio: it decodes what the squelch lets through, on the RX VFO
+(both, with dual watch), and pauses while the radio transmits or sleeps (power
+save). A new message gives three short beeps and an envelope with the number
+unread on the status bar; OnePress `MENU` `4` reads them. Its acks go out from
+the main screen as well. Listening costs about 8% of the CPU, and some battery
+while the squelch is open.
 
 A message that carries a number (`{12`: most radios and apps add one) asks
 for an acknowledgement, and the sender repeats it until one gets through. The
@@ -96,6 +105,7 @@ red LED lights for the half second it takes. Answers to your own messages
 | UP / DOWN | the next / previous message (newest first) |
 | MENU or PTT | reply: back to OnePress, with the sender as OP APRS's addressee |
 | `*` | the receiver's diagnostics line on / off |
+| F | listening on the main screen too (`ALWAYS`), or only in these apps |
 | EXIT | back to OnePress |
 
 The line under the messages says whom the radio listens for. The diagnostics
@@ -195,7 +205,7 @@ OP Location 1.6 KB.
 
 The receiver (`App/onepress/aprs_rx.c`, the APRS RX app's demodulator, and
 `App/app/aprs_bg.c`, with the inbox store `App/app/aprs_store.c` and the ack
-sender and the locations) takes about 5.7 KB of flash and 0.9 KB of RAM. TIM15
+sender, the locations and the main screen) takes about 6.2 KB of flash and 0.9 KB of RAM. TIM15
 starts each ADC conversion of the RX audio, 9600 a second, so the samples stay
 evenly spaced however late the interrupt runs; the interrupt uses about 8% of
 the CPU.

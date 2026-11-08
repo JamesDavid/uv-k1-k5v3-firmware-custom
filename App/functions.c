@@ -21,6 +21,9 @@
     #include "app/fm.h"
 #endif
 #include "audio.h"
+#ifdef ENABLE_FEAT_ONEPRESS
+    #include "app/aprs_bg.h"
+#endif
 #include "dcs.h"
 #include "driver/backlight.h"
 #if defined(ENABLE_FMRADIO_EMBEDDED)
@@ -227,6 +230,9 @@ void FUNCTION_Select(FUNCTION_Type_t Function)
 #endif
 
     gCurrentFunction = Function;
+#ifdef ENABLE_FEAT_ONEPRESS
+    APRS_BG_Function(Function);         /* the background APRS receiver: not in TX or power save */
+#endif
 
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
     if (nextIsActive && !nextIsTx && (!previousWasActive || previousWasTx))

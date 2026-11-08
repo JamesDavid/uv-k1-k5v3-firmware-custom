@@ -27,9 +27,12 @@
 #define OLD_BODY    84u                         /* from, text, id */
 #define LOC_MAGIC   0xA7u
 typedef struct { uint8_t magic, unread, sum, body[REC_BODY]; } rec_t;
-_Static_assert(sizeof(app_loc_t) <= REC_BODY, "the locations fit a record");
+/* The locations record: the locations, and the station listened for. */
+typedef struct { app_loc_t loc; char call[7]; uint8_t ssid; } svc_t;
+_Static_assert(sizeof(svc_t) <= REC_BODY, "the locations fit a record");
 
-static app_loc_t loc;
+static svc_t svc;
+#define loc (svc.loc)
 static bool locSaved;                           /* a location record is in the sector */
 
 static bool loaded;
@@ -45,7 +48,7 @@ static uint8_t sum(const uint8_t *b, uint8_t n)
 }
 static uint8_t bodyOf(const rec_t *r)
 {
-    return r->magic == REC_MAGIC ? REC_BODY : r->magic == OLD_MAGIC ? OLD_BODY : r->magic == LOC_MAGIC ? sizeof(app_loc_t) : 0;
+    return r->magic == REC_MAGIC ? REC_BODY : r->magic == OLD_MAGIC ? OLD_BODY : r->magic == LOC_MAGIC ? sizeof(svc_t) : 0;
 }
 
 static void readRec(uint8_t i, rec_t *r) { PY25Q16_ReadBuffer(APP_RX_INBOX_ADDR + i * REC_SIZE, r, sizeof *r); }
@@ -55,8 +58,8 @@ static void writeLoc(void)
     rec_t r;
     memset(&r, 0, sizeof r);
     r.magic = LOC_MAGIC;
-    memcpy(r.body, &loc, sizeof loc);
-    r.sum = sum(r.body, sizeof loc);
+    memcpy(r.body, &svc, sizeof svc);
+    r.sum = sum(r.body, sizeof svc);
     PY25Q16_WriteBufferPhysical(APP_RX_INBOX_ADDR + nextRec++ * REC_SIZE, &r, sizeof r);
     locSaved = true;
 }
@@ -87,7 +90,7 @@ static void load(void)
         if (!bodyOf(&r) || r.sum != sum(r.body, bodyOf(&r)))
             continue;                           /* cut short by a power off */
         if (r.magic == LOC_MAGIC) {
-            memcpy(&loc, r.body, sizeof loc);
+            memcpy(&svc, r.body, sizeof svc);
             locSaved = true;
             continue;
         }
@@ -129,6 +132,24 @@ app_loc_t *APRS_STORE_Loc(void)
     if (!loaded)
         load();
     return &loc;
+}
+
+bool APRS_STORE_Station(char *call, uint8_t *ssid)
+{
+    APRS_STORE_Loc();
+    memcpy(call, svc.call, sizeof svc.call);
+    *ssid = svc.ssid;
+    return svc.call[0] != 0;
+}
+
+void APRS_STORE_SetStation(const char *call, uint8_t ssid)
+{
+    APRS_STORE_Loc();
+    if (!memcmp(call, svc.call, sizeof svc.call) && ssid == svc.ssid)
+        return;
+    memcpy(svc.call, call, sizeof svc.call);
+    svc.ssid = ssid;
+    APRS_STORE_LocSave();
 }
 
 uint8_t APRS_STORE_LocReport(char *out)

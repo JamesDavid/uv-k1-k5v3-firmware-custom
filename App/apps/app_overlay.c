@@ -46,6 +46,7 @@
 #include "app/aprs_store.h"
 #else
 #define APRS_BG_Stop()      ((void)0)
+#define APRS_BG_Apps(on)    ((void)0)
 #define APRS_BG_Pause()     ((void)0)
 #define APRS_BG_Resume()    ((void)0)
 #define APRS_BG_Tune()      ((void)0)
@@ -1594,20 +1595,21 @@ uint8_t APP_LaunchOverlay(uint8_t slot)
     gAppVfoExit = false;   /* result belongs only to this top-level launch */
     uint8_t fast_hops = 0;
     app_state.handoff_unread = false;   /* a menu or shortcut launch carries no message */
+    APRS_BG_Apps(true);
     for (;;) {
         gAppLastSlot = slot;
         app_state.handoff_next = 0;
         const uint32_t started = SCHEDULER_GetTick10ms();
         const uint8_t rc = app_launch(slot);
         if (rc != APP_OK || !app_state.handoff_next) {
-            APRS_BG_Stop();            /* back to the radio: it listens only with the apps */
+            APRS_BG_Apps(false);       /* back to the radio: the main screen's turn */
             return rc;
         }
         slot = app_state.handoff_next - 1u;
         fast_hops = SCHEDULER_GetTick10ms() - started < APP_HANDOFF_FAST_10MS ? fast_hops + 1u : 0u;
         /* The key that ended the sender must not reach the target as a press. */
         if (APP_WaitKeyRelease() || fast_hops >= APP_HANDOFF_FAST_HOPS) {
-            APRS_BG_Stop();
+            APRS_BG_Apps(false);
             return APP_CHAIN_ABORTED;
         }
         app_state.handoff_unread = true;   /* until read, or the target's own handoff() */
