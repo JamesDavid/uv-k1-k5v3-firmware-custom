@@ -11,5 +11,6 @@ gcc $APP $I -Dapp_main=onepress_main -Dmemset=op_memset -Dmemcpy=op_memcpy -c Ap
 gcc $APP $I -Dapp_main=opaprs_main -Dmemset=aprs_memset -Dmemcpy=aprs_memcpy -DSYST_VAL='sim_systval()' -DSYST_LOAD=479999u \
     -include stdint.h -include tools/onepress_sim/systval.h -c App/apps/opaprs/opaprs_app.c -o build/sim_opaprs.o
 gcc $APP $I -Dapp_main=opcw_main -Dmemset=cw_memset -Dmemcpy=cw_memcpy -c App/apps/opcw/opcw_app.c -o build/sim_opcw.o
-gcc -std=gnu11 -O2 -Wall $I $OP tools/onepress_sim/opsim.c App/app/onepress_svc.c App/onepress/onepress.c \
-    build/sim_onepress.o build/sim_opaprs.o build/sim_opcw.o -o build/opsim
+gcc $APP $I -Dapp_main=opinbox_main -Dmemset=inbox_memset -c App/apps/opinbox/opinbox_app.c -o build/sim_opinbox.o
+gcc -std=gnu11 -O2 -Wall $I $OP tools/onepress_sim/opsim.c App/app/onepress_svc.c App/onepress/onepress.c App/onepress/aprs_rx.c \
+    build/sim_onepress.o build/sim_opaprs.o build/sim_opcw.o build/sim_opinbox.o -o build/opsim

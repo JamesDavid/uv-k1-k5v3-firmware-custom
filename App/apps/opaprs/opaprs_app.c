@@ -8,11 +8,15 @@
  * frequency rewritten at each NRZI transition, bits timed from SysTick) are
  * those of the APRS TX app, Copyright 2026 Armel F4HWN, Apache License 2.0.
  *
- * Keys: PTT or MENU send · 1 edit the addressee · 2 edit your callsign (empty:
+ * Keys: PTT send · 1 edit the addressee · 2 edit your callsign (empty:
  *   the boot message's) · 3 SSID · 4 path (DIRECT, WIDE1-1, WIDE1-1,WIDE2-1) ·
  *   EXIT back to OnePress. Editing: 2-9 multi-tap A-Z and the digit, held: the
  *   digit; 0 and 1 digits (1 again: '-'), EXIT deletes, MENU done.
  * Settings (16 bytes): your callsign, the addressee, SSID and path.
+ *
+ * OnePress may hand over the addressee of a reply (from OP Inbox). The
+ * background receiver (API level 5) listens for messages to the callsign and
+ * SSID set here.
  */
 
 #include <stdint.h>
@@ -209,7 +213,7 @@ static void draw(void)
     for (uint8_t r = 0, i = 0; r < 3u && t[i]; r++) {
         o = g.str;
         for (uint8_t c = 0; c < 32u && t[i] && i < TEXT_MAX; c++) *o++ = t[i++];
-        tiny((uint8_t)(10u + r * 6u), o);
+        tiny((uint8_t)(9u + r * 6u), o);
     }
     char c[12];
     o = put(g.str, "FROM ");
@@ -217,7 +221,7 @@ static void draw(void)
     memcpy(o, c, n); o += n;
     if (ROUTE & 15u) { *o++ = '-'; o = putu(o, ROUTE & 15u); }
     if ((ROUTE >> 4) & 7u) { *o++ = ' '; o = put(o, PATHS[(ROUTE >> 4) & 7u]); }
-    tiny(28, o);
+    tiny(27, o);                                    /* print_tiny rows are y + 8: clear of the frequency at 40 */
     A->draw_frequency(A->tx_freq(), 0, 4);
     o = g.str;
     if (g.edit) o = put(o, "2-9 ABC  EXIT DEL  MENU OK");
@@ -250,6 +254,15 @@ static void editKey(uint8_t key)
     if (n < max) fld[n] = (uint8_t)t[g.tapAt];
 }
 
+/* The background receiver listens for this station. */
+static void listen(void)
+{
+    char c[12];
+    uint8_t n = myCall(c);
+    c[n] = 0;
+    if (n) A->rx_start(c, (uint8_t)(ROUTE & 15u));
+}
+
 static void keys(void)
 {
     uint8_t key = A->get_key();
@@ -273,7 +286,7 @@ static void keys(void)
     if (g.edit) { editKey(key); return; }
     g.status = ST_IDLE;
     if (key == APP_KEY_EXIT) g.running = false;
-    else if (key == APP_KEY_MENU || key == APP_KEY_PTT) send();
+    else if (key == APP_KEY_PTT) send();          /* PTT only: MENU from OnePress, pressed once too often, must not transmit */
     else if (key == APP_KEY_1) { g.edit = ED_TO; g.tapKey = 0xFF; }
     else if (key == APP_KEY_2) { g.edit = ED_CALL; g.tapKey = 0xFF; }
     else if (key == APP_KEY_3) ROUTE = (uint8_t)((ROUTE & 0xF0u) | ((ROUTE + 1u) & 15u));
@@ -285,10 +298,13 @@ void app_main(const app_api_t *api)
 {
     g.api = api;
     g.prevKey = APP_KEY_INVALID;
-    api->handoff_read(NULL, 0, NULL);
+    char to[TO_MAX + 1];
+    int16_t r = api->handoff_read(to, TO_MAX, NULL);   /* a reply's addressee */
     api->cfg_load(g.cfg, sizeof g.cfg);
+    if (r > 1) for (uint8_t i = 0; i < TO_MAX; i++) TO[i] = (uint8_t)(i < r && to[i] ? to[i] : 0);
     for (uint8_t i = 0; i < 15u; i++) if (g.cfg[i] && !callChar((char)g.cfg[i]) && g.cfg[i] != '-') g.cfg[i] = 0;
     if (!(ROUTE & 0x80u) || ((ROUTE >> 4) & 7u) > 2u) ROUTE = 0x97u;   /* first use: SSID 7, WIDE1-1 */
+    listen();
     api->backlight_on();
     g.running = true;
     g.redraw = true;
@@ -300,6 +316,7 @@ void app_main(const app_api_t *api)
         api->backlight_update();
     }
     api->cfg_save(g.cfg, sizeof g.cfg);
+    listen();                                       /* the callsign or SSID may have changed */
     const uint8_t sent = g.sent ? 1u : 0u;          /* back to OnePress (1: sent) */
     api->handoff("OnePress", &sent, 1);
 }

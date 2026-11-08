@@ -17,10 +17,16 @@
  *            deleting goes back to the end
  *   F        ABC: spell exactly with multi-tap (call signs, names), F again back
  *   EXIT     delete; held, delete words; on an empty message, quit
- *   MENU     send: 1 APRS message (with no message: its settings), 2 CW, 3 clear
+ *   MENU     send: 1 APRS message (with no message: its settings), 2 CW, 3 clear,
+ *            4 the APRS messages received
  *   PTT      send the way the message was last sent
  * The message survives leaving the app (until power off) and sending, to send
  * it again; a sender app hands back here when it is done.
+ *
+ * While it runs (and OP APRS, OP CW, OP Inbox after it) the radio listens for
+ * APRS messages to the station in the background (API level 5): "1 MSG" and a
+ * beep when one comes in, MENU 4 to read it in OP Inbox, which can hand its
+ * sender back here as the addressee of the reply.
  */
 
 #include <stdint.h>
@@ -41,6 +47,7 @@
 
 static const char APRS_APP[] = "OP APRS";
 static const char CW_APP[] = "OP CW";
+static const char INBOX_APP[] = "OP Inbox";
 /* Multi-tap letters per key 2-9 (each group ends with the digit). */
 static const char *const TAPS[8] = { "abc", "def", "ghi", "jkl", "mno", "pqrs", "tuv", "wxyz" };
 static const char KEY_OF[26] = "22233344455566677778889999";
@@ -55,6 +62,7 @@ static struct {
     uint8_t mode, screen, sender;       /* sender: 1 APRS, 2 CW (PTT sends that way) */
     uint8_t key, held;                  /* the key down, and what holding it did    */
     uint8_t tapKey, tapAt;              /* multi-tap: key, letter index             */
+    uint8_t unread;                     /* APRS messages received, not read yet     */
     uint8_t nLocks, nGuess, guess;      /* guesses for the selected slot (0: not listed) */
     int16_t sel;                        /* the selected slot; -1: the last (typing)   */
     int16_t slots;                      /* op_decode's result                        */
@@ -64,6 +72,7 @@ static struct {
     uint16_t ids[MAX_GUESS];
     char text[APP_OP_TEXT_MAX + 1];
     char line[34];
+    char to[12];                        /* the reply's addressee, from OP Inbox      */
 } g;
 #define A (g.api)
 
@@ -198,13 +207,19 @@ static void digit(uint8_t d)
     add(d == 1 ? '#' : (char)('0' + d));
 }
 
+/* Hands off to app, or shows the menu with "App missing". */
+static void go(const char *app, const char *msg)
+{
+    if (A->handoff(app, msg, msg[0] ? slen(msg) + 1u : 0)) g.running = false;
+    else { g.screen = SCR_MENU; g.redraw = true; g.line[0] = 1; }  /* line[0] = 1: not installed */
+}
+
 static void send(uint8_t how)
 {
     if (!g.text[0] && how != 1) return;     /* OP APRS opens empty too, for its settings */
     memcpy(A->op_text, g.text, sizeof g.text);
     g.sender = how;
-    if (A->handoff(how == 1 ? APRS_APP : CW_APP, NULL, 0)) g.running = false;
-    else { g.screen = SCR_MENU; g.redraw = true; g.line[0] = 1; }  /* line[0] = 1: not installed */
+    go(how == 1 ? APRS_APP : CW_APP, how == 1 ? g.to : "");  /* OP APRS: the reply's addressee */
 }
 
 static void press(uint8_t key)
@@ -213,6 +228,7 @@ static void press(uint8_t key)
     if (g.screen == SCR_MENU) {
         g.screen = SCR_TYPE;
         if (key == APP_KEY_1 || key == APP_KEY_2) send((uint8_t)(key - APP_KEY_0));
+        else if (key == APP_KEY_4) go(INBOX_APP, "");
         else if (key == APP_KEY_3) { g.n = 0; g.nLocks = 0; decode(); }
         return;
     }
@@ -271,6 +287,7 @@ static void draw(void)
     A->status_clear();
     A->print_inverse("ONEPRESS", 2, 0, true, true, 2 + 8 * 4);
     if (g.mode == MODE_ABC) A->print_inverse("ABC", 40, 0, true, true, 40 + 3 * 4);
+    if (g.unread) { char m[8], *o = putu(m, g.unread); o = put(o, " MSG"); *o = 0; A->print_inverse(m, 56, 0, true, true, 56 + 5 * 4); }
     A->draw_battery();
     if (!g.ok) {
         A->print_normal("No word model", 0, 127, 1);
@@ -281,6 +298,7 @@ static void draw(void)
         A->print_normal("1 APRS message", 4, 0, 2);
         A->print_normal("2 CW", 4, 0, 3);
         A->print_normal("3 Clear", 4, 0, 4);
+        A->print_normal("4 Inbox", 4, 0, 5);
     } else {
         /* the text, wrapped at spaces, its last ROWS lines; the selected word underlined */
         uint8_t start[24], nl = 0, len = slen(g.text), s = 0;
@@ -331,6 +349,7 @@ static void draw(void)
         if (g.slots > 0) A->op_choice((uint8_t)(g.slots - 1), &kind);
         if (g.sel >= 0) o = put(o, "  * FIXES");
         else if (kind == APP_OP_PARTIAL) o = put(o, "  * TAKES IT");
+        else if (g.to[0] && !g.nGuess) { o = put(o, "  TO "); o = put(o, g.to); }
         tiny(0, 50, o);
     }
     A->blit_status();
@@ -340,7 +359,8 @@ static void draw(void)
 __attribute__((section(".text.entry"), used))
 void app_main(const app_api_t *api)
 {
-    uint8_t c[2];
+    uint8_t c[9];                       /* magic, sender, the station's call and SSID */
+    char call[7];
     g.api = api;
     g.keys = api->op_keys;
     g.key = APP_KEY_INVALID;
@@ -348,7 +368,15 @@ void app_main(const app_api_t *api)
     g.ok = api->op_open() == 0;
     api->cfg_load(c, sizeof c);
     if (c[0] == CFG_MAGIC && c[1] <= 2) g.sender = c[1];
-    api->handoff_read(NULL, 0, NULL);   /* back from a sender: the message stays, to send again */
+    /* from OP Inbox, the station to reply to; back from a sender, the message
+     * stays, to send again */
+    if (api->handoff_read(g.to, sizeof g.to - 1u, NULL) <= 1) g.to[0] = 0;
+    /* listen for messages: to the station OP APRS last set, saved here, else the boot message's */
+    if (!api->rx_station(call, &c[1])) {
+        if (c[0] == CFG_MAGIC && c[2] > ' ' && c[2] <= 'Z') { memcpy(call, c + 2, 6); call[6] = 0; c[1] = c[8]; }
+        else { api->boot_callsign(call, sizeof call); c[1] = 0; }
+        api->rx_start(call, c[1]);
+    }
     while (g.n < APP_OP_KEYS_MAX && g.keys[g.n]) g.n++;
     if (g.ok) decode();
     api->backlight_on();
@@ -357,6 +385,12 @@ void app_main(const app_api_t *api)
     while (g.running) {
         keys();
         if (!g.running) break;
+        uint8_t u = api->rx_unread();
+        if (u != g.unread) {
+            if (u > g.unread) api->play_tone(1000, 120);
+            g.unread = u;
+            g.redraw = true;
+        }
         if (g.redraw) { g.redraw = false; draw(); }
         api->battery_sample();
         api->delay_ms(LOOP_MS);
@@ -364,6 +398,7 @@ void app_main(const app_api_t *api)
     }
     g.keys[g.n] = 0;
     c[0] = CFG_MAGIC;
+    if (api->rx_station(call, &c[8])) memcpy(c + 2, call, 6);
     c[1] = g.sender;
     api->cfg_save(c, sizeof c);
 }

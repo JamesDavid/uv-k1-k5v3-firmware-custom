@@ -221,6 +221,9 @@ enable_feature(ENABLE_FEAT_F4HWN_OVERLAY_BEAM)
 enable_feature(ENABLE_FEAT_ONEPRESS
     app/onepress_svc.c
     onepress/onepress.c
+    app/aprs_bg.c
+    app/aprs_store.c
+    onepress/aprs_rx.c
 )
 if(ENABLE_FEAT_ONEPRESS)
     target_compile_definitions(App INTERFACE OP_EXT_MODEL OP_NO_NN OP_NO_QWERTY OP_NO_CJK OP_NO_ADDRESS

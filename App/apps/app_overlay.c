@@ -42,6 +42,13 @@
 #include "app/app.h"
 #ifdef ENABLE_FEAT_ONEPRESS
 #include "app/onepress_svc.h"
+#include "app/aprs_bg.h"
+#else
+#define APRS_BG_Stop()      ((void)0)
+#define APRS_BG_Pause()     ((void)0)
+#define APRS_BG_Resume()    ((void)0)
+#define APRS_BG_Tune()      ((void)0)
+#define APRS_BG_AfterTone() ((void)0)
 #endif
 #ifdef ENABLE_FEAT_F4HWN_RXTX_LOG
 #include "app/rxtx_log.h"
@@ -112,6 +119,7 @@ enum {
 #endif
 #ifdef ENABLE_FEAT_ONEPRESS
                        | APP_CAP_ONEPRESS
+                       | APP_CAP_APRS_INBOX
 #endif
 };
 
@@ -373,6 +381,7 @@ static void app_play_tone(uint16_t tone, uint16_t ms)
     AUDIO_AudioPathOn();
     BK4819_PlayToneRaw(tone, ms);
     AUDIO_AudioPathOff();
+    APRS_BG_AfterTone();
 }
 
 #ifdef ENABLE_FEAT_F4HWN_OVERLAY_BEAM
@@ -783,6 +792,7 @@ static void app_af_capture_open(void)
 {
     if (app_afc.open)
         return;
+    APRS_BG_Pause();                                /* the app takes the ADC and PA4 */
     app_afc.moder = GPIOA->MODER;
     app_afc.rcc   = RCC->APBENR1;
     app_afc.dac   = DAC1->CR;
@@ -815,6 +825,7 @@ static void app_af_capture_close(void)
     DAC1->DHR12R1 = app_afc.dhr;
     RCC->APBENR1  = app_afc.rcc;
     GPIOA->MODER  = app_afc.moder;
+    APRS_BG_Resume();
 }
 
 /* ---- API level 3: 48 MHz cycle clock ----
@@ -893,7 +904,11 @@ static uint8_t app_tx_state(void)
 }
 static void     app_tx_tone(uint16_t hz) { BK4819_TransmitTone(false, hz); }
 static void     app_tx_mute(bool on)     { if (on) BK4819_EnterTxMute(); else BK4819_ExitTxMute(); }
-static void     app_tx_end(void)         { BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false); RADIO_SetupRegisters(true); }
+static void     app_tx_end(void)         { BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, false); RADIO_SetupRegisters(true); APRS_BG_Resume(); }
+/* The background receiver stops for a transmission: nothing to hear, and its
+ * interrupt would jitter the app's keying. */
+static void     app_tx_set_params(void)  { APRS_BG_Pause(); RADIO_SetTxParameters(); }
+static void     app_tx_prepare(void)     { APRS_BG_Pause(); RADIO_PrepareTx(); }
 static void     app_tx_carrier(bool on)  { BK4819_ToggleGpioOut(BK4819_GPIO1_PIN29_PA_ENABLE, on); }
 static uint32_t app_tx_freq(void)        { return gTxVfo->pTX->Frequency; }
 static void app_boot_callsign(char *buf, uint8_t len)
@@ -1248,7 +1263,7 @@ static const app_api_t app_api = {
     .audio_scope      = UI_DisplayAudioScopeOverlay,
     .status_line      = gStatusLine,
     .tx_state         = app_tx_state,
-    .tx_set_params    = RADIO_SetTxParameters,
+    .tx_set_params    = app_tx_set_params,
     .tx_tone          = app_tx_tone,
     .tx_mute          = app_tx_mute,
     .tx_end           = app_tx_end,
@@ -1309,7 +1324,7 @@ static const app_api_t app_api = {
      * system information; inside it, an app would call a NULL pointer. */
     .handoff             = app_handoff,
     .handoff_read        = app_handoff_read,
-    .tx_prepare          = RADIO_PrepareTx,
+    .tx_prepare          = app_tx_prepare,
 #ifdef APP_SERIAL
     .serial_read         = app_serial_read,
     .serial_write        = app_serial_write,
@@ -1330,6 +1345,12 @@ static const app_api_t app_api = {
     .op_word             = OP_Word,
     .op_keys             = gOpKeys,
     .op_text             = gOpText,
+    .rx_start            = APRS_BG_Start,
+    .rx_station          = APRS_BG_Station,
+    .rx_count            = APRS_BG_Count,
+    .rx_msg              = APRS_BG_Msg,
+    .rx_unread           = APRS_BG_Unread,
+    .rx_stats            = APRS_BG_Stats,
 #endif
 };
 
@@ -1434,6 +1455,7 @@ static uint8_t app_launch(uint8_t slot)
     gRxVfo         = gTxVfo;
     gCurrentVfo    = gTxVfo;
     RADIO_SetupRegisters(true);
+    APRS_BG_Tune();                    /* a background receiver keeps listening */
 
     app_entry_t entry = (app_entry_t)(((uint32_t)ws + h.entry_off) | 1u);
     app_cyc_base = APP_CYC_DIAGNOSTIC_START - app_cycles_raw();
@@ -1547,13 +1569,17 @@ uint8_t APP_LaunchOverlay(uint8_t slot)
         app_state.handoff_next = 0;
         const uint32_t started = SCHEDULER_GetTick10ms();
         const uint8_t rc = app_launch(slot);
-        if (rc != APP_OK || !app_state.handoff_next)
+        if (rc != APP_OK || !app_state.handoff_next) {
+            APRS_BG_Stop();            /* back to the radio: it listens only with the apps */
             return rc;
+        }
         slot = app_state.handoff_next - 1u;
         fast_hops = SCHEDULER_GetTick10ms() - started < APP_HANDOFF_FAST_10MS ? fast_hops + 1u : 0u;
         /* The key that ended the sender must not reach the target as a press. */
-        if (APP_WaitKeyRelease() || fast_hops >= APP_HANDOFF_FAST_HOPS)
+        if (APP_WaitKeyRelease() || fast_hops >= APP_HANDOFF_FAST_HOPS) {
+            APRS_BG_Stop();
             return APP_CHAIN_ABORTED;
+        }
         app_state.handoff_unread = true;   /* until read, or the target's own handoff() */
     }
 }

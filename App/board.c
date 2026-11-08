@@ -21,6 +21,9 @@
     #include "app/fm.h"
 #endif
 #include "board.h"
+#ifdef ENABLE_FEAT_ONEPRESS
+    #include "app/aprs_bg.h"
+#endif
 #ifdef ENABLE_FEAT_F4HWN_OVERLAY_APPS
     #include "apps/app_overlay.h"
 #endif
@@ -176,6 +179,14 @@ void BOARD_ADC_Init(void)
 
 void BOARD_ADC_GetBatteryInfo(uint16_t *pVoltage, uint16_t *pCurrent)
 {
+#ifdef ENABLE_FEAT_ONEPRESS
+    /* The background APRS receiver owns the ADC while it runs and reads the
+     * battery between its samples. */
+    if (APRS_BG_Battery(pVoltage)) {
+        *pCurrent = 0;
+        return;
+    }
+#endif
 #ifdef ENABLE_FEAT_F4HWN_OVERLAY_APPS
     /* An overlay app may hold the ADC on PA4 (RX audio capture): the battery
      * channel back for this conversion, whoever asks for it. */

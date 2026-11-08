@@ -22,7 +22,7 @@ import zlib
 import serial
 
 MODEL_ADDR = 0x162000          # the reserve after the 48 app slots
-MODEL_MAX = 0x7C000             # up to the Sonic 4K reserve at 0x1DE000
+MODEL_MAX = 0x7B000             # up to the APRS inbox sector at 0x1DD000 (the Sonic 4K reserve at 0x1DE000)
 SECTOR = 0x1000
 CHUNK = 128                     # PY25Q16_RAW_CHUNK_SIZE
 OBFUS = bytes.fromhex("166c14e62e910d402135d5401303e980")

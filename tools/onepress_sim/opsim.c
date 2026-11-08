@@ -1,11 +1,15 @@
 /*
- * opsim - runs the OnePress, OP APRS and OP CW overlay apps on a PC against a
+ * opsim - runs the OnePress, OP APRS, OP CW and OP Inbox overlay apps on a PC against a
  * simulated app_api_t: the real resident service (App/app/onepress_svc.c) and
  * decoder, the model file as the external flash at APP_OP_MODEL_ADDR, keys from
  * a script, the screen printed as text, and every APRS transmission decoded
  * back from its tones (NRZI, bit stuffing, FCS) into TNC2 text.
  *
- *   opsim model.bin "keys..."
+ *   opsim model.bin "keys..." [audio.u16@seconds]
+ *
+ * audio.u16 (tools/aprs_rx_test/gen.py) is RX audio heard from that time on:
+ * the background APRS receiver (App/onepress/aprs_rx.c) decodes it while it
+ * runs, as the radio's ADC interrupt would.
  *
  * Keys, separated by spaces: 0-9 * F M (MENU) X (EXIT) U D (up, down) P (PTT),
  * each pressed for 80 ms, or held with :ms (6:700); w:ms waits; s prints the
@@ -17,10 +21,13 @@
 #include <setjmp.h>
 #include "apps/app_api.h"
 #include "app/onepress_svc.h"
+#include "onepress/aprs_rx.h"
 
 void onepress_main(const app_api_t *api);
 void opaprs_main(const app_api_t *api);
 void opcw_main(const app_api_t *api);
+void opinbox_main(const app_api_t *api);
+static const char *names[4] = { "OnePress", "OP APRS", "OP CW", "OP Inbox" };
 
 /* ---- the external flash: the model file at APP_OP_MODEL_ADDR ---- */
 static uint8_t *model;
@@ -109,7 +116,37 @@ static void blit(void)
     while (shown < n_screens && now_ms() >= screen_at[shown]) { shown++; dump(); }
 }
 static void blit_line(unsigned l) { (void)l; }
-static void delay_ms(uint32_t ms) { cyc += (uint64_t)ms * 48000u; blit(); if (now_ms() > script_end) longjmp(done, 1); }
+/* ---- the background APRS receiver, fed from the audio file ---- */
+static uint16_t *audio;
+static long audio_n, audio_fed;
+static uint32_t audio_at;                   /* ms */
+static int rx_state;                        /* 0 off, 1 running, 2 paused (TX) */
+static char rx_call[7];
+static uint8_t rx_ssid;
+static void rx_feed(void)
+{
+    long upto = now_ms() < audio_at ? 0 : (long)((uint64_t)(now_ms() - audio_at) * 96 / 10);
+    if (upto > audio_n) upto = audio_n;
+    for (; audio_fed < upto; audio_fed++) if (rx_state == 1) aprs_rx_sample(audio[audio_fed]);
+}
+static void rx_start(const char *call, uint8_t ssid)
+{
+    char c[7] = { 0 };
+    for (int i = 0; i < 6 && call[i]; i++) c[i] = call[i];
+    if (!c[0]) return;
+    rx_feed();
+    if (memcmp(c, rx_call, 7) || ssid != rx_ssid) { aprs_rx_init(c, ssid); memcpy(rx_call, c, 7); rx_ssid = ssid; }
+    if (!rx_state) printf("  [RX listening for %s-%u]\n", rx_call, rx_ssid);
+    rx_state = 1;
+}
+static bool rx_station(char *call, uint8_t *ssid) { memcpy(call, rx_call, 7); *ssid = rx_ssid; return rx_state != 0; }
+static uint8_t rx_count(void) { rx_feed(); aprs_rx_poll(); return aprs_rx_count(); }
+static app_rx_msg_t *rx_msg(uint8_t n) { rx_feed(); aprs_rx_poll(); return (app_rx_msg_t *)aprs_rx_msg(n); }
+static uint8_t rx_unread(void) { rx_feed(); aprs_rx_poll(); return aprs_rx_unread(); }
+static void rx_stats(app_rx_stats_t *s) { rx_feed(); memset(s, 0, sizeof *s); s->samples = (uint32_t)audio_fed; s->frames = aprs_rx_frames; s->lo = 1900; s->hi = 2200; s->state = rx_state; }
+static void play_tone(uint16_t hz, uint16_t ms) { printf("  [beep %u Hz, %u ms]\n", hz, ms); cyc += (uint64_t)ms * 48000u; }
+
+static void delay_ms(uint32_t ms) { cyc += (uint64_t)ms * 48000u; rx_feed(); blit(); if (now_ms() > script_end) longjmp(done, 1); }
 static void nothing(void) {}
 static void nothing_b(bool b) { (void)b; }
 static void draw_frequency(uint32_t f, uint8_t x, uint8_t line) { char s[20]; snprintf(s, sizeof s, "%u.%05u", f / 100000, f % 100000); add_row(line, x, s); }
@@ -122,7 +159,7 @@ static int8_t nav_dir(uint8_t k) { return k == APP_KEY_UP ? 1 : k == APP_KEY_DOW
 static void boot_callsign(char *buf, uint8_t len) { snprintf(buf, len, "N0CALL"); }
 
 /* ---- settings, hand-off ---- */
-static uint8_t cfg[3][16];
+static uint8_t cfg[4][16];
 static int running_app;                     /* 0 OnePress, 1 OP APRS, 2 OP CW */
 static void cfg_load(uint8_t *b, uint8_t n) { memcpy(b, cfg[running_app], n > 16 ? 16 : n); }
 static void cfg_save(const uint8_t *b, uint8_t n) { memcpy(cfg[running_app], b, n > 16 ? 16 : n); }
@@ -130,17 +167,18 @@ static char handoff_to[17];
 static uint8_t handoff_msg[32], handoff_len, handoff_pending, handoff_have;
 static bool handoff(const char *name, const void *msg, uint8_t len)
 {
-    if (strcmp(name, "OnePress") && strcmp(name, "OP APRS") && strcmp(name, "OP CW")) return false;
+    if (strcmp(name, "OnePress") && strcmp(name, "OP APRS") && strcmp(name, "OP CW") && strcmp(name, "OP Inbox")) return false;
     snprintf(handoff_to, sizeof handoff_to, "%s", name);
     handoff_len = len > 32 ? 32 : len;
     if (len) memcpy(handoff_msg, msg, handoff_len);
     handoff_pending = 1;
     return true;
 }
+static int handoff_from;
 static int16_t handoff_read(void *buf, uint8_t max, char *from)
 {
-    (void)from;
     if (!handoff_have) return -1;
+    if (from) strcpy(from, names[handoff_from]);
     handoff_have = 0;
     if (buf) memcpy(buf, handoff_msg, max < handoff_len ? max : handoff_len);
     return handoff_len;
@@ -157,7 +195,7 @@ static void bk_write(uint8_t reg, uint16_t v)
 }
 static uint16_t bk_read(uint8_t r) { (void)r; return 0; }
 static uint8_t tx_state(void) { return 0; }
-static void tx_set_params(void) { tx_on = 1; n_tones = 0; tone_freq = 0; printf("  [TX on 144.390]\n"); }
+static void tx_set_params(void) { rx_feed(); if (rx_state == 1) rx_state = 2; tx_on = 1; n_tones = 0; tone_freq = 0; printf("  [TX on 144.390]\n"); }
 static void tx_tone(uint16_t hz) { (void)hz; }
 static int keyed, morse_on;
 static uint64_t key_since, key_off_at;
@@ -228,6 +266,8 @@ static void tx_end(void)
     if (tx_on && n_tones) decode_afsk();
     if (tx_on && morse_on) { printf("  [CW sent] %s\n", morse); morse[0] = 0; morse_on = 0; }
     tx_on = 0;
+    rx_feed();
+    if (rx_state == 2) rx_state = 1;
 }
 static void tx_carrier(bool on) { (void)on; }
 static void get_battery(void) {}
@@ -246,11 +286,23 @@ static app_api_t api = {
     .append_u32 = append_u32, .handoff = handoff, .handoff_read = handoff_read,
     .op_open = OP_Open, .op_decode = OP_Decode, .op_render = OP_Render, .op_guesses = OP_Guesses,
     .op_choice = OP_Choice, .op_word = OP_Word, .op_keys = gOpKeys, .op_text = gOpText,
+    .play_tone = play_tone, .rx_start = rx_start, .rx_station = rx_station, .rx_count = rx_count,
+    .rx_msg = rx_msg, .rx_unread = rx_unread, .rx_stats = rx_stats,
 };
 
 int main(int argc, char **argv)
 {
-    if (argc < 3) { fprintf(stderr, "usage: opsim model.bin \"keys...\"\n"); return 2; }
+    if (argc < 3) { fprintf(stderr, "usage: opsim model.bin \"keys...\" [audio.u16@seconds]\n"); return 2; }
+    if (argc > 3) {
+        char *at = strrchr(argv[3], '@');
+        if (at) { *at = 0; audio_at = (uint32_t)(atof(at + 1) * 1000); }
+        FILE *af = fopen(argv[3], "rb");
+        if (!af) { perror(argv[3]); return 1; }
+        fseek(af, 0, SEEK_END); audio_n = ftell(af) / 2; fseek(af, 0, SEEK_SET);
+        audio = malloc((size_t)audio_n * 2);
+        if (fread(audio, 2, (size_t)audio_n, af) != (size_t)audio_n) return 1;
+        fclose(af);
+    }
     FILE *f = fopen(argv[1], "rb");
     if (!f) { perror(argv[1]); return 1; }
     fseek(f, 0, SEEK_END); model_size = (size_t)ftell(f); fseek(f, 0, SEEK_SET);
@@ -275,19 +327,19 @@ int main(int argc, char **argv)
         t += ms + 80;
     }
     script_end = t + 500;
-    void (*apps[3])(const app_api_t *) = { onepress_main, opaprs_main, opcw_main };
-    const char *names[3] = { "OnePress", "OP APRS", "OP CW" };
+    void (*apps[4])(const app_api_t *) = { onepress_main, opaprs_main, opcw_main, opinbox_main };
     if (setjmp(done)) { printf("== (script over)\n"); dump(); return 0; }
     for (int hop = 0; hop < 20; hop++) {
         printf("== %s\n", names[running_app]);
         unsigned long r0 = flash_reads;
         apps[running_app](&api);
         printf("== %s returned (%lu flash reads)\n", names[running_app], flash_reads - r0);
-        if (!handoff_pending || now_ms() >= script_end) break;
+        if (!handoff_pending || now_ms() >= script_end) { if (rx_state) printf("  [RX off: back to the radio]\n"); rx_state = 0; break; }
         handoff_pending = 0;
+        handoff_from = running_app;
         handoff_have = 1;
         while (get_key() != APP_KEY_INVALID) cyc += 480000;  /* the loader waits for every key to be let go */
-        for (int i = 0; i < 3; i++) if (!strcmp(handoff_to, names[i])) running_app = i;
+        for (int i = 0; i < 4; i++) if (!strcmp(handoff_to, names[i])) running_app = i;
     }
     while (shown < n_screens) { shown++; dump(); }
     return 0;

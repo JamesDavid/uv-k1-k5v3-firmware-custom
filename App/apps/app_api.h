@@ -54,9 +54,11 @@
  *      viewer_update (the LCD without the K5Viewer side effect), vfo_stage
  *      (deferred update of the current VFO)
  *   4  OnePress text entry (APP_CAP_ONEPRESS): op_open, op_decode, op_render,
- *      op_guesses, op_choice, op_word and the op_keys / op_text buffers */
+ *      op_guesses, op_choice, op_word and the op_keys / op_text buffers
+ *   5  background APRS message receiver (APP_CAP_APRS_INBOX): rx_start,
+ *      rx_station, rx_count, rx_msg, rx_unread, rx_stats */
 #define APP_ABI_MAJOR  1u
-#define APP_API_LEVEL  4u
+#define APP_API_LEVEL  5u
 
 /* App name length in app_header_t, the name handoff() takes (API level 3). */
 #define APP_NAME_LEN    16
@@ -159,11 +161,32 @@ typedef struct {
     uint16_t slot, id;
 } app_op_lock_t;
 #define APP_OP_MODEL_ADDR 0x00162000u   /* model in external flash: the reserve after the 48 app slots */
-#define APP_OP_MODEL_MAX  0x0007C000u   /* up to the Sonic 4K reserve at 0x1DE000 */
+#define APP_OP_MODEL_MAX  0x0007B000u   /* up to the APRS inbox sector at 0x1DD000 */
+#define APP_RX_INBOX_ADDR 0x001DD000u   /* the APRS messages received, kept over power off */
 #define APP_OP_KEYS_MAX   72u           /* key presses in one message */
 #define APP_OP_TEXT_MAX   140u          /* its text (an APRS message is 67 characters) */
 #define APP_OP_NO_MODEL   (-1)
 enum { APP_OP_WORD = 0, APP_OP_PARTIAL = 1, APP_OP_PUNCT = 2, APP_OP_LITERAL = 3, APP_OP_UNKNOWN = 4 };
+
+/* An APRS message to this station (API level 5). */
+#define APP_RX_TEXT_MAX 67u             /* an APRS message's text */
+typedef struct {
+    char    from[10];                   /* "KE7AQA-7" */
+    char    text[APP_RX_TEXT_MAX + 1];
+    char    id[6];                      /* its message number, "" for none */
+    uint8_t unread;
+} app_rx_msg_t;
+
+/* The receiver at work (rx_stats): for a diagnostics line. */
+typedef struct {
+    uint32_t samples;               /* audio samples taken since rx_start       */
+    uint16_t frames;                /* packets with a good FCS, any station     */
+    uint16_t lo, hi;                /* lowest / highest audio code since the
+                                       last call (mid-scale 2048)               */
+    uint16_t battery;               /* the last battery reading (ADC code)      */
+    uint8_t  state;                 /* 0 off, 1 running, 2 paused               */
+    uint8_t  pad;
+} app_rx_stats_t;
 
 typedef struct app_api {
     /* Fixed four-byte prefix; services remain naturally pointer-aligned. */
@@ -483,6 +506,28 @@ typedef struct app_api {
     uint8_t  (*op_word)(uint16_t id, char *buf, uint8_t cap);
     char     *op_keys;
     char     *op_text;
+
+    /* ---- API level 5: background APRS message receiver (APP_CAP_APRS_INBOX) ----
+     * The resident receiver decodes APRS (Bell 202, 1200 bauds) on the RX VFO
+     * from a timer interrupt while the app runs, and keeps the last messages
+     * addressed to the station (CALL-SSID, or CALL), newest first, in external
+     * flash at APP_RX_INBOX_ADDR too, read or not, so they outlive power off
+     * (and an app's unread flags it clears). It runs from rx_start until the chain of
+     * hand-offs ends (the menu or the main screen), and pauses while the app
+     * transmits or captures the RX audio itself (af_capture_open). It takes
+     * ~9 % of the CPU and samples from a timer, so an app's timing is
+     * unaffected beyond that; the speaker stays off.
+     * rx_start starts it for this callsign (6 characters at most) and SSID,
+     * or changes the station it listens for; the inbox is kept. rx_station gives the
+     * station listened for (call: 7 bytes) and returns false when the receiver
+     * is stopped. rx_msg(n) is a message, 0 the newest, NULL past the last;
+     * an app clears its unread flag once shown. */
+    void     (*rx_start)(const char *call, uint8_t ssid);
+    bool     (*rx_station)(char *call, uint8_t *ssid);
+    uint8_t  (*rx_count)(void);
+    app_rx_msg_t *(*rx_msg)(uint8_t n);
+    uint8_t  (*rx_unread)(void);
+    void     (*rx_stats)(app_rx_stats_t *s);
 } app_api_t;
 
 /* Serial ports and serial_ctl state bits (API level 3). */
@@ -506,7 +551,8 @@ _Static_assert(offsetof(app_api_t, handoff) == 356u &&
                offsetof(app_api_t, blit_page) == 380u &&
                offsetof(app_api_t, vfo_stage) == 392u &&
                offsetof(app_api_t, op_open) == 396u &&
-               sizeof(app_api_t) == 428u,
+               offsetof(app_api_t, rx_start) == 428u &&
+               sizeof(app_api_t) == 452u,
                "app_api_t is append-only: every edition shares this layout");
 #endif
 
