@@ -87,8 +87,8 @@ the radio's own audio: it decodes what the squelch lets through, on the RX VFO
 (both, with dual watch), and pauses while the radio transmits or sleeps (power
 save). A new message gives three short beeps and an envelope with the number
 unread on the status bar; OnePress `MENU` `4` reads them. Its acks go out from
-the main screen as well. Listening costs about 8% of the CPU, and some battery
-while the squelch is open.
+the main screen as well. Listening costs about 12% of the CPU, and some
+battery while the squelch is open.
 
 A message that carries a number (`{12`: most radios and apps add one) asks
 for an acknowledgement, and the sender repeats it until one gets through. The
@@ -179,6 +179,13 @@ minutes; from decimal degrees, the minutes are the decimals times 60.
 | 1 | `MCW` (a tone over FM: any FM radio hears it) / `CARR` (the carrier keyed too, for a CW receiver) |
 | EXIT | back to OnePress |
 
+The receiver decodes CW too, from the same audio and wherever it listens (the
+apps, the main screen): Morse sent as a 600-1000 Hz tone over FM (MCW, as OP CW
+sends it), up to about 30 WPM, the speed followed. OP CW shows the last
+characters as `HEARD CQ CQ DE W1ABC K`, and the speed after `RX`. A lone E or
+T between word gaps is left out: that is what squelch noise makes. A carrier
+keyed without a tone (CW for an SSB receiver) is not heard on FM.
+
 > [!CAUTION]
 > Transmit only on frequencies, power levels and modes your licence allows.
 
@@ -192,7 +199,9 @@ APRS transmission decoded back from its tones, FCS checked. For example
 A third argument, `audio.u16@seconds` (`tools/aprs_rx_test/gen.py`), is RX
 audio the background receiver hears from that time on. `tools/aprs_rx_test`
 also tests the decoder on recorded traffic (`rxtest`) and the inbox in flash,
-power cuts included (`storetest`).
+power cuts included (`storetest`); `cwgen.py` makes MCW audio (speed, tone,
+level, noise, a hand key's jitter) for `cwtest`, which runs the CW receiver
+beside the APRS one.
 
 ## Resources
 
@@ -200,12 +209,14 @@ The decoder takes about 21 KB of flash and 2.1 KB of RAM (1.6 KB of working
 memory, a 256-byte read cache, the model's table), plus up to 2.5 KB of stack
 while it decodes; `System Info` shows the stack margin left. A key press reads
 the model about 2,000 times (32 bytes each, about 16 us at 24 MHz) with the cache. The apps fit the
-4 KiB overlay: OnePress 3.9 KB, OP APRS 4.0 KB, OP CW 1.5 KB, OP Inbox 1.5 KB,
+4 KiB overlay: OnePress 3.9 KB, OP APRS 4.0 KB, OP CW 1.7 KB, OP Inbox 1.6 KB,
 OP Location 1.6 KB.
 
 The receiver (`App/onepress/aprs_rx.c`, the APRS RX app's demodulator, and
 `App/app/aprs_bg.c`, with the inbox store `App/app/aprs_store.c` and the ack
-sender, the locations and the main screen) takes about 6.2 KB of flash and 0.9 KB of RAM. TIM15
+sender, the locations, the main screen and the CW receiver `App/onepress/cw_rx.c`)
+takes about 7.2 KB of flash and 1 KB of RAM. TIM15
 starts each ADC conversion of the RX audio, 9600 a second, so the samples stay
 evenly spaced however late the interrupt runs; the interrupt uses about 8% of
-the CPU.
+the CPU (12% with the CW receiver; 2,300 cycles at most of the 5,000 a
+sample allows).

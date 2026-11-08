@@ -7,6 +7,7 @@
  * Keys: PTT or MENU send · EXIT stop sending, or back to OnePress · UP/DOWN or
  *   2/8 speed (5-40 WPM) · 3/9 tone (400-1200 Hz) · 1 MCW / CARR.
  * Settings: speed, tone and mode.
+ * HEARD: the MCW the background receiver decoded (API level 5), with its speed.
  */
 
 #include <stdint.h>
@@ -31,7 +32,8 @@ static const uint8_t MARK_CODE[] = { 0x55, 0x32, 0x4C, 0x73, 0x61, 0x5E, 0x6B };
 
 static struct {
     const app_api_t *api;
-    uint8_t prevKey, wpm, carr, sending, done;
+    uint8_t prevKey, wpm, carr, sending, done, heardN;
+    char heardLast;
     uint16_t tone, unit;
     bool running, redraw, stop, denied;
     char str[34];
@@ -62,20 +64,30 @@ static void draw(void)
     if (g.sending) A->print_inverse("TRANSMIT", 40, 0, true, true, 40 + 8 * 4);
     A->draw_battery();
     const char *t = A->op_text;
-    for (uint8_t r = 0, i = 0; r < 4u && t[i]; r++) {          /* the message, sent part inverted */
+    for (uint8_t r = 0, i = 0; r < 3u && t[i]; r++) {          /* the message */
         o = g.str;
-        uint8_t x = 0;
         for (uint8_t c = 0; c < 32u && t[i] && i < TEXT_MAX; c++) *o++ = t[i++];
         *o = 0;
-        A->print_tiny(g.str, x, (uint8_t)(2u + r * 7u), false, true);
+        A->print_tiny(g.str, 0, (uint8_t)(1u + r * 6u), false, true);
+    }
+    uint8_t wpm;                                    /* the CW heard, its last 26 characters */
+    const char *h = A->cw_heard(&wpm);
+    if (h[0]) {
+        uint8_t n = 0;
+        while (h[n]) n++;
+        o = put(g.str, "HEARD ");
+        o = put(o, h + (n > 26u ? n - 26u : 0u));
+        *o = 0;
+        A->print_tiny(g.str, 0, 20, false, true);
     }
     o = putu(g.str, g.wpm);
     o = put(o, " WPM  ");
     o = putu(o, g.tone);
     o = put(o, " HZ  ");
     o = put(o, g.carr ? "CARR" : "MCW");
+    if (h[0]) { o = put(o, "  RX "); o = putu(o, wpm); }
     *o = 0;
-    A->print_tiny(g.str, 0, 30, false, true);
+    A->print_tiny(g.str, 0, 27, false, true);         /* rows 35-39: clear of the frequency at 40 */
     A->draw_frequency(A->tx_freq(), 0, 4);
     o = g.str;
     if (g.denied) o = put(o, "TX NOT ALLOWED HERE");
@@ -184,6 +196,10 @@ void app_main(const app_api_t *api)
     g.redraw = true;
     while (g.running) {
         keys();
+        const char *h = api->cw_heard(NULL);       /* more CW heard: shown */
+        uint8_t n = 0;
+        while (h[n]) n++;
+        if (n != g.heardN || (n && h[n - 1u] != g.heardLast)) { g.heardN = n; g.heardLast = n ? h[n - 1u] : 0; g.redraw = true; }
         if (g.redraw) { g.redraw = false; draw(); }
         api->battery_sample();
         api->delay_ms(LOOP_MS);

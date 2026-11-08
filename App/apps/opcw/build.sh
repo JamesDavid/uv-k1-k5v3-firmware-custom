@@ -9,7 +9,7 @@ set -euo pipefail
 APP="$(basename "$PWD")"
 APP_NAME="OP CW"                    # <-- the only per-app line
 APP_VER="0.1"
-APP_API_MIN=4
+APP_API_MIN=5
 APP_VMA=${APP_VMA:-0x20000280}      # pinned overlay VMA (Core/py32f071xb.ld)
 OUT="${APP_NAME// /}"
 
@@ -31,7 +31,7 @@ step 1 compile ; "$CC" $CFLAGS $LDFLAGS "${APP}_app.c" -lgcc -o "${APP}.elf"
 step 2 objcopy ; "$OBJCOPY" -O binary "${APP}.elf" "${APP}.bin"
 step 3 pack    ; python3 ../pack_app.py "${APP}.bin" "${OUT}.app" \
                    --name "$APP_NAME" --ver "$APP_VER" --api-min "$APP_API_MIN" --vma "${APP_VMA}" \
-                   --shortcut none --require onepress >/dev/null
+                   --shortcut none --require onepress --require aprsinbox >/dev/null
 trap - ERR
 
 BYTES=$(wc -c < "${APP}.bin")

@@ -23,6 +23,7 @@
 #include "app/onepress_svc.h"
 #include "onepress/aprs_rx.h"
 #include "onepress/aprs_tx.h"
+#include "onepress/cw_rx.h"
 
 void onepress_main(const app_api_t *api);
 void opaprs_main(const app_api_t *api);
@@ -133,7 +134,12 @@ static void rx_feed(void)
 {
     long upto = now_ms() < audio_at ? 0 : (long)((uint64_t)(now_ms() - audio_at) * 96 / 10);
     /* after the recording, silence (mid-scale), as a radio keeps sampling */
-    for (; audio_fed < upto; audio_fed++) if (rx_state == 1) aprs_rx_sample(audio_fed < audio_n ? audio[audio_fed] : 2048);
+    for (; audio_fed < upto; audio_fed++) {
+        if (rx_state != 1) continue;
+        const uint16_t v = audio_fed < audio_n ? audio[audio_fed] : 2048;
+        aprs_rx_sample(v);
+        cw_rx_sample(v, aprs_rx_busy());
+    }
 }
 static void rx_start(const char *call, uint8_t ssid)
 {
@@ -141,6 +147,7 @@ static void rx_start(const char *call, uint8_t ssid)
     for (int i = 0; i < 6 && call[i]; i++) c[i] = call[i];
     if (!c[0]) return;
     rx_feed();
+    if (!rx_call[0]) cw_rx_init();
     if (memcmp(c, rx_call, 7) || (ssid & 15) != (rx_ssid & 15)) { aprs_rx_init(c, ssid & 15); memcpy(rx_call, c, 7); }
     rx_ssid = ssid;
     aprs_rx_freq = vfo_freq;
@@ -192,6 +199,7 @@ static void draw_frequency(uint32_t f, uint8_t x, uint8_t line) { char s[20]; sn
  * message was heard there; tx_freq_set overrides it until the app exits. */
 static uint32_t tx_freq(void) { return tx_override ? tx_override : vfo_freq; }
 static void tx_freq_set(uint32_t f) { tx_override = f; }
+static const char *cw_heard(uint8_t *wpm) { rx_feed(); if (wpm) *wpm = cw_rx_wpm(); return cw_rx_text; }
 static uint32_t ticks_ms(void) { return now_ms() / 10 * 10; }
 static char *append_u32(char *o, uint32_t v) { return o + sprintf(o, "%u", v); }
 static char *append_i32(char *o, int32_t v) { return o + sprintf(o, "%d", v); }
@@ -353,7 +361,7 @@ static app_api_t api = {
     .op_open = OP_Open, .op_decode = OP_Decode, .op_render = OP_Render, .op_guesses = OP_Guesses,
     .op_choice = OP_Choice, .op_word = OP_Word, .op_keys = gOpKeys, .op_text = gOpText,
     .play_tone = play_tone, .rx_start = rx_start, .rx_station = rx_station, .rx_count = rx_count,
-    .rx_msg = rx_msg, .rx_unread = rx_unread, .rx_stats = rx_stats, .rx_msgid = rx_msgid, .rx_delivered = rx_delivered, .tx_freq_set = tx_freq_set, .loc = loc, .loc_save = loc_save, .loc_report = loc_report,
+    .rx_msg = rx_msg, .rx_unread = rx_unread, .rx_stats = rx_stats, .rx_msgid = rx_msgid, .rx_delivered = rx_delivered, .tx_freq_set = tx_freq_set, .loc = loc, .loc_save = loc_save, .loc_report = loc_report, .cw_heard = cw_heard,
 };
 
 int main(int argc, char **argv)

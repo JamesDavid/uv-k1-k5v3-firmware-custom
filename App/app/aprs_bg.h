@@ -18,6 +18,7 @@ uint8_t       APRS_BG_MsgId(const char *to, const char *text);
 uint8_t       APRS_BG_Delivered(void);
 /* While an app waits (delay_ms): the inbox, and an ack due sent. */
 void          APRS_BG_Service(void);
+const char   *APRS_BG_CwHeard(uint8_t *wpm);
 
 /* For the loader: off at the end of a chain of apps; paused while an app
  * transmits or captures the audio itself; the BK4829 audio output back on

@@ -1381,6 +1381,7 @@ static const app_api_t app_api = {
     .loc                 = APRS_STORE_Loc,
     .loc_save            = APRS_STORE_LocSave,
     .loc_report          = APRS_STORE_LocReport,
+    .cw_heard            = APRS_BG_CwHeard,
 #endif
 };
 
