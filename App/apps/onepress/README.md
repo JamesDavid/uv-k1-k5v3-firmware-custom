@@ -6,7 +6,7 @@ words around it say which. Two sender apps put the message on the air, and
 the radio listens for answers while you type:
 
 - `OP APRS` sends it as an APRS message to a callsign (Bell 202 AFSK, as APRS TX);
-- `OP CW` sends it in Morse, as a tone over FM (MCW) or with the carrier keyed;
+- `OP CW` sends it in Morse, as a tone over FM (MCW) or as CW (the carrier keyed);
 - `OP Inbox` shows the APRS messages to your callsign that the radio heard in
   the background while these apps were open, and replies to them;
 - `OP Location` keeps 4 locations, one of which OP APRS can send after a message.
@@ -132,7 +132,7 @@ keep the frequency in flash too. Otherwise it goes out on the TX VFO.
 
 | Key | Action |
 |---|---|
-| PTT | send (only PTT: a MENU pressed once too often must not transmit) |
+| PTT | send (only PTT: a MENU pressed once too often must not transmit); off an APRS frequency, a warning first (`NOT APRS: 144.390`), PTT again sends |
 | 5 | the location sent after the message: none, then each saved one (`@1` on the `FROM` line) |
 | 6 | OP Location, to enter the locations |
 | 1 | edit the addressee |
@@ -173,10 +173,10 @@ minutes; from decimal degrees, the minutes are the decimals times 60.
 
 | Key | Action |
 |---|---|
-| PTT or MENU | send; EXIT stops |
+| PTT | send; EXIT stops. On an APRS frequency, or MCW in 144.0-144.1 MHz, a warning first; PTT again sends |
 | UP / DOWN or 2 / 8 | speed, 5-40 WPM (18) |
-| 3 / 9 | tone, 400-1200 Hz (700) |
-| 1 | `MCW` (a tone over FM: any FM radio hears it) / `CARR` (the carrier keyed too, for a CW receiver) |
+| 3 / 9 | tone, 400-1200 Hz (700), for MCW |
+| 1 | `MCW` (a tone over FM: any FM radio hears it) / `CW` (the carrier alone keyed, A1A: an SSB/CW receiver hears it; an FM radio does not hear a tone) |
 | EXIT | back to OnePress |
 
 The receiver decodes CW too, from the same audio and wherever it listens (the
@@ -185,6 +185,21 @@ sends it), up to about 30 WPM, the speed followed. OP CW shows the last
 characters as `HEARD CQ CQ DE W1ABC K`, and the speed after `RX`. A lone E or
 T between word gaps is left out: that is what squelch noise makes. A carrier
 keyed without a tone (CW for an SSB receiver) is not heard on FM.
+
+## Frequencies
+
+Nothing is enforced (band plans differ from country to country), but the apps
+warn before sending where it would be out of place, and send on a second PTT:
+
+- OP APRS off an APRS frequency: 144.390 MHz (North America, the main one),
+  144.800 (Europe), 145.825 (the ISS and satellites) or 445.925 (UHF, some
+  regions). This also catches two radios that are not on the same frequency.
+- OP CW on an APRS frequency (it would jam the network), or MCW in 144.0-144.1
+  MHz, which is CW only in the US: use `CW` there. MCW belongs on a quiet FM
+  simplex frequency, not 146.52, the national voice calling frequency.
+
+CW mode keys the power amplifier on and off with no shaping, so check it for key
+clicks on an SDR before using it on the air.
 
 > [!CAUTION]
 > Transmit only on frequencies, power levels and modes your licence allows.

@@ -1,11 +1,15 @@
 /*
  * OP CW - sends the message typed in OnePress in Morse on the TX VFO: a tone
- * over FM (MCW, heard by any FM radio) or, in CARR mode, the carrier keyed as
- * well (heard as CW by an SSB/CW receiver). Keying as the Beacon app's
- * (Copyright 2026 Armel F4HWN, Apache License 2.0).
+ * over FM (MCW, heard by any FM radio) or, in CW mode, the carrier alone keyed
+ * (A1A: heard by an SSB/CW receiver; an FM radio hears the carrier come and
+ * go, not a tone). Keying as the Beacon app's (Copyright 2026 Armel F4HWN,
+ * Apache License 2.0).
  *
- * Keys: PTT or MENU send · EXIT stop sending, or back to OnePress · UP/DOWN or
- *   2/8 speed (5-40 WPM) · 3/9 tone (400-1200 Hz) · 1 MCW / CARR.
+ * Keys: PTT send (only PTT: a MENU pressed once too often must not transmit)
+ *   · EXIT stop sending, or back to OnePress · UP/DOWN or 2/8 speed (5-40
+ *   WPM) · 3/9 tone (400-1200 Hz, MCW) · 1 MCW / CW.
+ * On an APRS frequency, or MCW in 144.0-144.1 (CW only), PTT warns first and
+ * sends when pressed again.
  * Settings: speed, tone and mode.
  * HEARD: the MCW the background receiver decoded (API level 5), with its speed.
  */
@@ -36,6 +40,7 @@ static struct {
     char heardLast;
     uint16_t tone, unit;
     bool running, redraw, stop, denied;
+    uint8_t warn;           /* the frequency's kind, warned about: PTT again sends */
     char str[34];
 } g;
 #define A (g.api)
@@ -84,13 +89,15 @@ static void draw(void)
     o = put(o, " WPM  ");
     o = putu(o, g.tone);
     o = put(o, " HZ  ");
-    o = put(o, g.carr ? "CARR" : "MCW");
+    o = put(o, g.carr ? "CW" : "MCW");
     if (h[0]) { o = put(o, "  RX "); o = putu(o, wpm); }
     *o = 0;
     A->print_tiny(g.str, 0, 27, false, true);         /* rows 35-39: clear of the frequency at 40 */
     A->draw_frequency(A->tx_freq(), 0, 4);
     o = g.str;
     if (g.denied) o = put(o, "TX NOT ALLOWED HERE");
+    else if (g.warn & APP_FREQ_APRS) o = put(o, "APRS FREQ: SIMPLEX  PTT AGAIN");
+    else if (g.warn) o = put(o, "CW ONLY HERE: 1 MODE  PTT AGAIN");
     else if (g.sending) { o = put(o, "SENDING "); o = putu(o, g.done); o = put(o, "  EXIT STOPS"); }
     else o = put(o, "PTT SEND  2/8 WPM 3/9 HZ 1 MODE");
     *o = 0;
@@ -113,8 +120,10 @@ static void wait(uint16_t ms)
 /* The red LED, as the radio lights it in TX: BK4819 GPIO out (REG_33) bit 0, set
  * only if the read looks right (PA on); tx_end rewrites REG_33 without it. */
 static void redLed(void) { uint16_t io = A->bk_read(REG_33); if (io & 0x20u) A->bk_write(REG_33, (uint16_t)(io | 1u)); }
-static void keyOn(void) { A->tx_mute(false); if (g.carr) { A->tx_carrier(true); redLed(); } }
-static void keyOff(void) { A->tx_mute(true); if (g.carr) A->tx_carrier(false); }
+/* MCW: the tone on and off over a steady carrier. CW: the carrier on and off,
+ * the tone kept muted (an unmodulated carrier). */
+static void keyOn(void) { if (g.carr) { A->tx_carrier(true); redLed(); } else A->tx_mute(false); }
+static void keyOff(void) { if (g.carr) A->tx_carrier(false); else A->tx_mute(true); }
 
 static void send(void)
 {
@@ -130,8 +139,8 @@ static void send(void)
     redLed();
     A->tx_tone(g.tone);
     A->tx_mute(true);
+    if (g.carr) A->tx_carrier(false);               /* CW: no carrier until the first element */
     wait(LEAD_MS);
-    if (g.carr) A->tx_carrier(false);
     for (uint8_t i = 0; t[i] && !g.stop; i++) {
         uint8_t c = code(t[i]);
         if (!c) wait((uint16_t)(g.unit * 4u));       /* a space: 7 units with the 3 after a letter */
@@ -167,8 +176,15 @@ static void keys(void)
     if (key == APP_KEY_2) d = 1;
     if (key == APP_KEY_8) d = -1;
     g.denied = false;
+    const uint8_t warned = g.warn;
+    g.warn = 0;
     if (key == APP_KEY_EXIT) g.running = false;
-    else if (key == APP_KEY_MENU || key == APP_KEY_PTT) { send(); g.prevKey = A->get_key(); }
+    else if (key == APP_KEY_PTT) {
+        const uint8_t k = A->freq_kind(A->tx_freq());
+        const uint8_t w = (uint8_t)(k & (APP_FREQ_APRS | (g.carr ? 0u : APP_FREQ_CW_ONLY)));
+        if (w && !warned) g.warn = w;
+        else { send(); g.prevKey = A->get_key(); }
+    }
     else if (d) { int16_t w = (int16_t)(g.wpm + d); if (w >= 5 && w <= 40) g.wpm = (uint8_t)w; }
     else if (key == APP_KEY_3 && g.tone < 1200u) g.tone = (uint16_t)(g.tone + 50u);
     else if (key == APP_KEY_9 && g.tone > 400u) g.tone = (uint16_t)(g.tone - 50u);

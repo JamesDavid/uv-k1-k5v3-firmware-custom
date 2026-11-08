@@ -42,6 +42,15 @@ uint8_t aprs_tx_position(char *o, int32_t lat, int32_t lon, char sym)
     return (uint8_t)(p - o);
 }
 
+uint8_t aprs_tx_freq_kind(uint32_t f)
+{
+    static const uint32_t APRS[4] = { 14439000u, 14480000u, 14582500u, 44592500u };
+    for (uint8_t i = 0; i < 4u; i++)
+        if (f + 500u >= APRS[i] && f <= APRS[i] + 500u)     /* within 5 kHz */
+            return (uint8_t)(APRS_TX_APRS | (i ? 0u : APRS_TX_APRS_MAIN));
+    return f >= 14400000u && f < 14410000u ? APRS_TX_CW_ONLY : 0u;
+}
+
 uint8_t aprs_tx_frame(uint8_t *f, const char *src, uint8_t path, const char *to, const char *text)
 {
     uint8_t *p = f;

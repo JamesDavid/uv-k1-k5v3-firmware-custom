@@ -9,7 +9,7 @@
  * frequency rewritten at each NRZI transition, bits timed from SysTick) are
  * those of the APRS TX app, Copyright 2026 Armel F4HWN, Apache License 2.0.
  *
- * Keys: PTT send · 5 the location sent after it (none, 1-4) · 6 OP Location · 1 edit the addressee · 2 edit your callsign (empty:
+ * Keys: PTT send (off an APRS frequency: a warning, PTT again sends) · 5 the location sent after it (none, 1-4) · 6 OP Location · 1 edit the addressee · 2 edit your callsign (empty:
  *   the boot message's) · 3 SSID · 4 path (DIRECT, WIDE1-1, WIDE1-1,WIDE2-1) ·
  *   EXIT back to OnePress. Editing: 2-9 multi-tap A-Z and the digit, held: the
  *   digit; 0 and 1 digits (1 again: '-'), EXIT deletes, MENU done.
@@ -52,7 +52,7 @@
 #define TAP_MS      1000u
 #define HOLD_MS     600u    /* a key held while editing: its digit */
 
-enum { ST_IDLE, ST_TX, ST_SENT, ST_DENIED, ST_NOCALL, ST_NOTO, ST_NOTEXT };
+enum { ST_IDLE, ST_TX, ST_SENT, ST_DENIED, ST_NOCALL, ST_NOTO, ST_NOTEXT, ST_NOTAPRS };
 enum { ED_NONE, ED_TO, ED_CALL };
 
 static const char DEST[] = "APZOP";             /* APZ: experimental software */
@@ -290,6 +290,7 @@ static void draw(void)
     else if (g.status == ST_NOCALL) o = put(o, "SET YOUR CALLSIGN: KEY 2");
     else if (g.status == ST_NOTO) o = put(o, "SET THE ADDRESSEE: KEY 1");
     else if (g.status == ST_NOTEXT) o = put(o, "NO MESSAGE: TYPE IT FIRST");
+    else if (g.status == ST_NOTAPRS) o = put(o, "NOT APRS: 144.390  PTT AGAIN");
     else if (g.status == ST_SENT && g.delivered) o = put(o, g.delivered == 1u ? "DELIVERED" : "REJECTED");
     else if (g.status == ST_SENT) { o = put(o, "SENT "); o = putu(o, g.sent); o = put(o, " NO ACK YET  PTT AGAIN"); }
     else o = put(o, "PTT SEND 1TO 2CALL 3SSID 4PATH");
@@ -346,9 +347,13 @@ static void keys(void)
     A->backlight_on();
     if (key == APP_KEY_WAKE) return;
     if (g.edit) { editKey(key); return; }
+    const bool warned = g.status == ST_NOTAPRS;     /* the warning shown: PTT again sends */
     g.status = ST_IDLE;
     if (key == APP_KEY_EXIT) g.running = false;
-    else if (key == APP_KEY_PTT) send();          /* PTT only: MENU from OnePress, pressed once too often, must not transmit */
+    else if (key == APP_KEY_PTT) {
+        if (!warned && !(A->freq_kind(A->tx_freq()) & APP_FREQ_APRS)) g.status = ST_NOTAPRS;
+        else send();
+    }          /* PTT only: MENU from OnePress, pressed once too often, must not transmit */
     else if (key == APP_KEY_1) { g.edit = ED_TO; g.tapKey = 0xFF; }
     else if (key == APP_KEY_2) { g.edit = ED_CALL; g.tapKey = 0xFF; }
     else if (key == APP_KEY_3) ROUTE = (uint8_t)((ROUTE & 0xF0u) | ((ROUTE + 1u) & 15u));

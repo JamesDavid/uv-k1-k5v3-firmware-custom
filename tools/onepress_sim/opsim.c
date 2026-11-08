@@ -199,6 +199,7 @@ static void draw_frequency(uint32_t f, uint8_t x, uint8_t line) { char s[20]; sn
  * message was heard there; tx_freq_set overrides it until the app exits. */
 static uint32_t tx_freq(void) { return tx_override ? tx_override : vfo_freq; }
 static void tx_freq_set(uint32_t f) { tx_override = f; }
+static uint8_t freq_kind(uint32_t f) { return aprs_tx_freq_kind(f); }
 static const char *cw_heard(uint8_t *wpm) { rx_feed(); if (wpm) *wpm = cw_rx_wpm(); return cw_rx_text; }
 static uint32_t ticks_ms(void) { return now_ms() / 10 * 10; }
 static char *append_u32(char *o, uint32_t v) { return o + sprintf(o, "%u", v); }
@@ -343,7 +344,7 @@ static void tx_end(void)
     rx_feed();
     if (rx_state == 2) rx_state = 1;
 }
-static void tx_carrier(bool on) { (void)on; }
+static void tx_carrier(bool on) { tx_mute(!on); }   /* CW: the carrier keyed, as the tone is in MCW */
 static void get_battery(void) {}
 
 static app_api_t api = {
@@ -361,7 +362,7 @@ static app_api_t api = {
     .op_open = OP_Open, .op_decode = OP_Decode, .op_render = OP_Render, .op_guesses = OP_Guesses,
     .op_choice = OP_Choice, .op_word = OP_Word, .op_keys = gOpKeys, .op_text = gOpText,
     .play_tone = play_tone, .rx_start = rx_start, .rx_station = rx_station, .rx_count = rx_count,
-    .rx_msg = rx_msg, .rx_unread = rx_unread, .rx_stats = rx_stats, .rx_msgid = rx_msgid, .rx_delivered = rx_delivered, .tx_freq_set = tx_freq_set, .loc = loc, .loc_save = loc_save, .loc_report = loc_report, .cw_heard = cw_heard,
+    .rx_msg = rx_msg, .rx_unread = rx_unread, .rx_stats = rx_stats, .rx_msgid = rx_msgid, .rx_delivered = rx_delivered, .tx_freq_set = tx_freq_set, .loc = loc, .loc_save = loc_save, .loc_report = loc_report, .cw_heard = cw_heard, .freq_kind = freq_kind,
 };
 
 int main(int argc, char **argv)
