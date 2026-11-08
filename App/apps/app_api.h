@@ -57,7 +57,7 @@
  *      op_guesses, op_choice, op_word and the op_keys / op_text buffers
  *   5  background APRS message receiver (APP_CAP_APRS_INBOX): rx_start,
  *      rx_station, rx_count, rx_msg, rx_unread, rx_stats, rx_msgid,
- *      rx_delivered (acks), tx_freq_set */
+ *      rx_delivered (acks), tx_freq_set, loc, loc_save, loc_report */
 #define APP_ABI_MAJOR  1u
 #define APP_API_LEVEL  5u
 
@@ -179,6 +179,16 @@ typedef struct {
     uint8_t pad[3];
     uint32_t freq;                      /* heard on (x10 Hz), 0: unknown */
 } app_rx_msg_t;
+
+/* Saved locations (loc): 4 slots in 1/6000 degree (0.01 minute, APRS's
+ * resolution), north and east positive, APP_LOC_NONE when not set; attach,
+ * the slot OP APRS sends after a message (1-4, 0 none). */
+#define APP_LOC_NONE  0x7FFFFFFF
+typedef struct {
+    int32_t  lat[4], lon[4];
+    uint8_t  attach;
+    uint8_t  pad[3];
+} app_loc_t;
 
 /* The receiver at work (rx_stats): for a diagnostics line. */
 typedef struct {
@@ -544,6 +554,13 @@ typedef struct app_api {
      * the app exits or sets 0 (a reply where the message was heard): tx_freq,
      * tx_state and the tx_* sequence use it; the VFO is not changed. */
     void     (*tx_freq_set)(uint32_t f);
+    /* The saved locations, in RAM (change them there); loc_save keeps them
+     * over power off (external flash, with the inbox). */
+    app_loc_t *(*loc)(void);
+    void     (*loc_save)(void);
+    /* The attached location as an APRS position report's information field,
+     * "!4903.50N/07201.75W[" (out: 21 bytes): its length, 0 for none. */
+    uint8_t  (*loc_report)(char *out);
 } app_api_t;
 
 /* Serial ports and serial_ctl state bits (API level 3). */
@@ -568,7 +585,7 @@ _Static_assert(offsetof(app_api_t, handoff) == 356u &&
                offsetof(app_api_t, vfo_stage) == 392u &&
                offsetof(app_api_t, op_open) == 396u &&
                offsetof(app_api_t, rx_start) == 428u &&
-               sizeof(app_api_t) == 464u,
+               sizeof(app_api_t) == 476u,
                "app_api_t is append-only: every edition shares this layout");
 #endif
 

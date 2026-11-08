@@ -43,6 +43,7 @@
 #ifdef ENABLE_FEAT_ONEPRESS
 #include "app/onepress_svc.h"
 #include "app/aprs_bg.h"
+#include "app/aprs_store.h"
 #else
 #define APRS_BG_Stop()      ((void)0)
 #define APRS_BG_Pause()     ((void)0)
@@ -1376,6 +1377,9 @@ static const app_api_t app_api = {
     .rx_msgid            = APRS_BG_MsgId,
     .rx_delivered        = APRS_BG_Delivered,
     .tx_freq_set         = app_tx_freq_set,
+    .loc                 = APRS_STORE_Loc,
+    .loc_save            = APRS_STORE_LocSave,
+    .loc_report          = APRS_STORE_LocReport,
 #endif
 };
 

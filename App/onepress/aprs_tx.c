@@ -15,6 +15,33 @@ static uint8_t *addr(uint8_t *f, const char *c, bool last)
     return f;
 }
 
+static char *coord(char *o, int32_t v, uint8_t degs, char plus, char minus)
+{
+    char h = plus;
+    if (v < 0) { v = -v; h = minus; }
+    uint32_t u = (uint32_t)v, deg = u / 6000u, r = u % 6000u;
+    char d[7] = { (char)('0' + deg / 100u), (char)('0' + deg / 10u % 10u), (char)('0' + deg % 10u),
+                  (char)('0' + r / 1000u), (char)('0' + r / 100u % 10u), (char)('0' + r / 10u % 10u), (char)('0' + r % 10u) };
+    for (uint8_t i = (uint8_t)(3u - degs); i < 7u; i++) {
+        *o++ = d[i];
+        if (i == 4u) *o++ = '.';
+    }
+    *o++ = h;
+    return o;
+}
+
+uint8_t aprs_tx_position(char *o, int32_t lat, int32_t lon, char sym)
+{
+    char *p = o;
+    *p++ = '!';
+    p = coord(p, lat, 2, 'N', 'S');
+    *p++ = '/';
+    p = coord(p, lon, 3, 'E', 'W');
+    *p++ = sym;
+    *p = 0;
+    return (uint8_t)(p - o);
+}
+
 uint8_t aprs_tx_frame(uint8_t *f, const char *src, uint8_t path, const char *to, const char *text)
 {
     uint8_t *p = f;

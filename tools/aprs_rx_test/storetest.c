@@ -5,9 +5,10 @@
  * then prints the inbox and saves the flash. Programming only clears bits, as
  * on the chip; an erase sets the sector back to 0xFF.
  *
- *   storetest flash.bin [audio.u16] [--read N] [--cut]
+ *   storetest flash.bin [audio.u16] [--read N] [--cut] [--loc N]
  *
  * --cut stops at the first record write, half done (a power off mid-write).
+ * --loc N saves location slot N (1-4, Sydney) and attaches it.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +16,7 @@
 #include "apps/app_api.h"
 #include "app/aprs_store.h"
 #include "onepress/aprs_rx.h"
+#include "onepress/aprs_tx.h"
 
 static uint8_t sector[0x1000];
 static int writes, erases, cut;
@@ -61,10 +63,11 @@ int main(int argc, char **argv)
     if (argc < 2) { fprintf(stderr, "usage: storetest flash.bin [audio.u16] [--read N] [--cut]\n"); return 2; }
     flashFile = argv[1];
     const char *audio = NULL;
-    int readN = -1;
+    int readN = -1, locN = 0;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--read") && i + 1 < argc) readN = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--cut")) cut = 1;
+        else if (!strcmp(argv[i], "--loc") && i + 1 < argc) locN = atoi(argv[++i]);
         else audio = argv[i];
     }
     memset(sector, 0xFF, sizeof sector);
@@ -86,7 +89,16 @@ int main(int argc, char **argv)
         APRS_STORE_Sync();
     }
     if (readN >= 0 && aprs_rx_msg((uint8_t)readN)) { aprs_rx_msg((uint8_t)readN)->unread = 0; APRS_STORE_Sync(); }
+    if (locN >= 1 && locN <= 4) {
+        app_loc_t *l = APRS_STORE_Loc();
+        l->lat[locN - 1] = -(33 * 6000 + 5212);     /* 33 52.12 S */
+        l->lon[locN - 1] = 151 * 6000 + 1250;       /* 151 12.50 E */
+        l->attach = (uint8_t)locN;
+        APRS_STORE_LocSave();
+    }
     show("now");
+    char rep[21];
+    printf("location attached %u: %s\n", APRS_STORE_Loc()->attach, APRS_STORE_LocReport(rep) ? rep : "(none)");
     uint8_t used = 0;
     while (used < 32 && sector[used * 128] != 0xFF) used++;
     printf("records %u/32, writes %d, erases %d\n", used, writes, erases);

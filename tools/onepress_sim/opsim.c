@@ -28,7 +28,9 @@ void onepress_main(const app_api_t *api);
 void opaprs_main(const app_api_t *api);
 void opcw_main(const app_api_t *api);
 void opinbox_main(const app_api_t *api);
-static const char *names[4] = { "OnePress", "OP APRS", "OP CW", "OP Inbox" };
+void oploc_main(const app_api_t *api);
+#define N_APPS 5
+static const char *names[N_APPS] = { "OnePress", "OP APRS", "OP CW", "OP Inbox", "OP Location" };
 
 /* ---- the external flash: the model file at APP_OP_MODEL_ADDR ---- */
 static uint8_t *model;
@@ -198,7 +200,18 @@ static int8_t nav_dir(uint8_t k) { return k == APP_KEY_UP ? 1 : k == APP_KEY_DOW
 static void boot_callsign(char *buf, uint8_t len) { snprintf(buf, len, "N0CALL"); }
 
 /* ---- settings, hand-off ---- */
-static uint8_t cfg[4][16];
+static uint8_t cfg[N_APPS][16];
+/* The saved locations, as the resident service keeps them (RAM; saving is counted). */
+static app_loc_t locs = { { APP_LOC_NONE, APP_LOC_NONE, APP_LOC_NONE, APP_LOC_NONE },
+                          { APP_LOC_NONE, APP_LOC_NONE, APP_LOC_NONE, APP_LOC_NONE }, 0, { 0 } };
+static app_loc_t *loc(void) { return &locs; }
+static void loc_save(void) { printf("  [locations saved: attach %u]\n", locs.attach); }
+static uint8_t loc_report(char *out)
+{
+    const uint8_t a = locs.attach;
+    if (a < 1 || a > 4 || locs.lat[a - 1] == APP_LOC_NONE) return 0;
+    return aprs_tx_position(out, locs.lat[a - 1], locs.lon[a - 1], '[');
+}
 static int running_app;                     /* 0 OnePress, 1 OP APRS, 2 OP CW */
 static void cfg_load(uint8_t *b, uint8_t n) { memcpy(b, cfg[running_app], n > 16 ? 16 : n); }
 static void cfg_save(const uint8_t *b, uint8_t n) { memcpy(cfg[running_app], b, n > 16 ? 16 : n); }
@@ -206,7 +219,9 @@ static char handoff_to[17];
 static uint8_t handoff_msg[32], handoff_len, handoff_pending, handoff_have;
 static bool handoff(const char *name, const void *msg, uint8_t len)
 {
-    if (strcmp(name, "OnePress") && strcmp(name, "OP APRS") && strcmp(name, "OP CW") && strcmp(name, "OP Inbox")) return false;
+    int known = 0;
+    for (int i = 0; i < N_APPS; i++) known |= !strcmp(name, names[i]);
+    if (!known) return false;
     snprintf(handoff_to, sizeof handoff_to, "%s", name);
     handoff_len = len > 32 ? 32 : len;
     if (len) memcpy(handoff_msg, msg, handoff_len);
@@ -268,21 +283,27 @@ static void decode_afsk(void)
         bits[nb++] = 0;
         for (int k = 1; k < cells; k++) bits[nb++] = 1;
     }
-    /* HDLC: between flags, five 1s then a stuffed 0 */
-    int i = 0;
+    /* HDLC: between flags, five 1s then a stuffed 0; one or more frames */
+    int i = 0, frames = 0;
     while (i + 8 <= nb && memcmp(bits + i, "\0\1\1\1\1\1\1\0", 8)) i++;     /* the first flag */
-    while (i + 8 <= nb && !memcmp(bits + i, "\0\1\1\1\1\1\1\0", 8)) i += 8;  /* and the rest */
-    uint8_t frame[400];
-    int nf = 0, ones = 0, nbit = 0;
-    uint8_t cur = 0;
-    for (; i < nb; i++) {
-        if (ones == 5) { if (bits[i] == 0) { ones = 0; continue; } break; }    /* 6 ones: a flag */
-        ones = bits[i] ? ones + 1 : 0;
-        cur |= (uint8_t)(bits[i] << nbit);
-        if (++nbit == 8) { frame[nf++] = cur; cur = 0; nbit = 0; if (nf == 400) break; }
+    for (;;) {
+        while (i + 8 <= nb && !memcmp(bits + i, "\0\1\1\1\1\1\1\0", 8)) i += 8;  /* flags */
+        uint8_t frame[400];
+        int nf = 0, ones = 0, nbit = 0;
+        uint8_t cur = 0;
+        for (; i < nb; i++) {
+            if (ones == 5) { if (bits[i] == 0) { ones = 0; continue; } break; }    /* 6 ones: a flag */
+            ones = bits[i] ? ones + 1 : 0;
+            cur |= (uint8_t)(bits[i] << nbit);
+            if (++nbit == 8) { frame[nf++] = cur; cur = 0; nbit = 0; if (nf == 400) break; }
+        }
+        if (nf < 18) break;
+        print_frame("AFSK decoded", frame, nf);
+        frames++;
+        if (i >= nb) break;
+        i -= 6;                                     /* back to the flag's first bit */
     }
-    if (nf < 18) { printf("  [AFSK: no frame]\n"); return; }
-    print_frame("AFSK decoded", frame, nf);
+    if (!frames) printf("  [AFSK: no frame]\n");
 }
 /* A frame as TNC2 text, its FCS checked. */
 static void print_frame(const char *what, const uint8_t *frame, int nf)
@@ -332,7 +353,7 @@ static app_api_t api = {
     .op_open = OP_Open, .op_decode = OP_Decode, .op_render = OP_Render, .op_guesses = OP_Guesses,
     .op_choice = OP_Choice, .op_word = OP_Word, .op_keys = gOpKeys, .op_text = gOpText,
     .play_tone = play_tone, .rx_start = rx_start, .rx_station = rx_station, .rx_count = rx_count,
-    .rx_msg = rx_msg, .rx_unread = rx_unread, .rx_stats = rx_stats, .rx_msgid = rx_msgid, .rx_delivered = rx_delivered, .tx_freq_set = tx_freq_set,
+    .rx_msg = rx_msg, .rx_unread = rx_unread, .rx_stats = rx_stats, .rx_msgid = rx_msgid, .rx_delivered = rx_delivered, .tx_freq_set = tx_freq_set, .loc = loc, .loc_save = loc_save, .loc_report = loc_report,
 };
 
 int main(int argc, char **argv)
@@ -373,7 +394,7 @@ int main(int argc, char **argv)
         t += ms + 80;
     }
     script_end = t + 500;
-    void (*apps[4])(const app_api_t *) = { onepress_main, opaprs_main, opcw_main, opinbox_main };
+    void (*apps[N_APPS])(const app_api_t *) = { onepress_main, opaprs_main, opcw_main, opinbox_main, oploc_main };
     if (setjmp(done)) { printf("== (script over)\n"); dump(); return 0; }
     for (int hop = 0; hop < 20; hop++) {
         printf("== %s\n", names[running_app]);
@@ -386,7 +407,7 @@ int main(int argc, char **argv)
         handoff_from = running_app;
         handoff_have = 1;
         while (get_key() != APP_KEY_INVALID) cyc += 480000;  /* the loader waits for every key to be let go */
-        for (int i = 0; i < 4; i++) if (!strcmp(handoff_to, names[i])) running_app = i;
+        for (int i = 0; i < N_APPS; i++) if (!strcmp(handoff_to, names[i])) running_app = i;
     }
     while (shown < n_screens) { shown++; dump(); }
     return 0;

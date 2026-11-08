@@ -7,7 +7,8 @@
  * erase leave the sector cache alone, which holds the running app. A record a
  * power off cut short fails its checksum and is skipped. Records written
  * before messages carried their frequency (magic 0xA5, 84-byte body) still
- * load, with no frequency.
+ * load, with no frequency. The saved locations are a record of their own
+ * (magic 0xA7), the last one written the one in use.
  */
 #include <stddef.h>
 #include <string.h>
@@ -16,6 +17,7 @@
 #include "apps/app_api.h"
 #include "driver/py25q16.h"
 #include "onepress/aprs_rx.h"
+#include "onepress/aprs_tx.h"
 
 #define REC_SIZE    128u
 #define RECS        (0x1000u / REC_SIZE)
@@ -23,7 +25,12 @@
 #define REC_BODY    sizeof(aprs_msg_t)          /* its unread byte unused: the flag byte says */
 #define OLD_MAGIC   0xA5u
 #define OLD_BODY    84u                         /* from, text, id */
+#define LOC_MAGIC   0xA7u
 typedef struct { uint8_t magic, unread, sum, body[REC_BODY]; } rec_t;
+_Static_assert(sizeof(app_loc_t) <= REC_BODY, "the locations fit a record");
+
+static app_loc_t loc;
+static bool locSaved;                           /* a location record is in the sector */
 
 static bool loaded;
 static uint8_t nextRec;                         /* the first free record */
@@ -36,9 +43,23 @@ static uint8_t sum(const uint8_t *b, uint8_t n)
     for (uint8_t i = 0; i < n; i++) s = (uint8_t)(s + b[i]);
     return s;
 }
-static uint8_t bodyOf(const rec_t *r) { return r->magic == REC_MAGIC ? REC_BODY : r->magic == OLD_MAGIC ? OLD_BODY : 0; }
+static uint8_t bodyOf(const rec_t *r)
+{
+    return r->magic == REC_MAGIC ? REC_BODY : r->magic == OLD_MAGIC ? OLD_BODY : r->magic == LOC_MAGIC ? sizeof(app_loc_t) : 0;
+}
 
 static void readRec(uint8_t i, rec_t *r) { PY25Q16_ReadBuffer(APP_RX_INBOX_ADDR + i * REC_SIZE, r, sizeof *r); }
+
+static void writeLoc(void)
+{
+    rec_t r;
+    memset(&r, 0, sizeof r);
+    r.magic = LOC_MAGIC;
+    memcpy(r.body, &loc, sizeof loc);
+    r.sum = sum(r.body, sizeof loc);
+    PY25Q16_WriteBufferPhysical(APP_RX_INBOX_ADDR + nextRec++ * REC_SIZE, &r, sizeof r);
+    locSaved = true;
+}
 
 static void writeRec(const aprs_msg_t *m, uint8_t slot)
 {
@@ -58,12 +79,18 @@ static void load(void)
     uint8_t last[APRS_RX_INBOX], n = 0, i;
     rec_t r;
     loaded = true;
+    for (i = 0; i < 4u; i++) loc.lat[i] = loc.lon[i] = APP_LOC_NONE;
     for (i = 0; i < RECS; i++) {
         readRec(i, &r);
         if (r.magic == 0xFFu)
             break;                              /* erased: the end */
         if (!bodyOf(&r) || r.sum != sum(r.body, bodyOf(&r)))
             continue;                           /* cut short by a power off */
+        if (r.magic == LOC_MAGIC) {
+            memcpy(&loc, r.body, sizeof loc);
+            locSaved = true;
+            continue;
+        }
         memmove(last + 1, last, APRS_RX_INBOX - 1u);
         last[0] = i;
         if (n < APRS_RX_INBOX) n++;
@@ -83,6 +110,47 @@ static void load(void)
     }
 }
 
+/* Room for one more record: a full sector erased, the inbox (but its newest
+ * `skip` messages) and the locations written again. */
+static void room(uint8_t skip)
+{
+    if (nextRec < RECS)
+        return;
+    PY25Q16_SectorErasePhysical(APP_RX_INBOX_ADDR);
+    nextRec = 0;
+    for (uint8_t i = aprs_rx_count(); i-- > skip;)
+        writeRec(aprs_rx_msg(i), i);
+    if (locSaved)
+        writeLoc();
+}
+
+app_loc_t *APRS_STORE_Loc(void)
+{
+    if (!loaded)
+        load();
+    return &loc;
+}
+
+uint8_t APRS_STORE_LocReport(char *out)
+{
+    const app_loc_t *l = APRS_STORE_Loc();
+    const uint8_t a = l->attach;
+    if (a < 1u || a > 4u || l->lat[a - 1u] == APP_LOC_NONE)
+        return 0;
+    return aprs_tx_position(out, l->lat[a - 1u], l->lon[a - 1u], '[');   /* a person */
+}
+
+void APRS_STORE_LocSave(void)
+{
+    if (!loaded)
+        load();
+    if (nextRec >= RECS) {                      /* the sector written again, the locations with it */
+        locSaved = true;
+        room(0);
+    } else
+        writeLoc();
+}
+
 /* Writes a new message, and the read flags apps cleared. */
 void APRS_STORE_Sync(void)
 {
@@ -93,12 +161,7 @@ void APRS_STORE_Sync(void)
     if (m) {
         memmove(recOf + 1, recOf, APRS_RX_INBOX - 1u);
         memmove(recUnread + 1, recUnread, APRS_RX_INBOX - 1u);
-        if (nextRec >= RECS) {                  /* full: erase, write the inbox again */
-            PY25Q16_SectorErasePhysical(APP_RX_INBOX_ADDR);
-            nextRec = 0;
-            for (uint8_t i = n; i-- > 1u;)
-                writeRec(aprs_rx_msg(i), i);
-        }
+        room(1);                                /* the new one is written below */
         writeRec(m, 0);
     }
     for (uint8_t i = 0; i < n; i++) {

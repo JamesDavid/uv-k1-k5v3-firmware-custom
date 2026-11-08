@@ -9,7 +9,7 @@
  * frequency rewritten at each NRZI transition, bits timed from SysTick) are
  * those of the APRS TX app, Copyright 2026 Armel F4HWN, Apache License 2.0.
  *
- * Keys: PTT send · 1 edit the addressee · 2 edit your callsign (empty:
+ * Keys: PTT send · 5 the location sent after it (none, 1-4) · 6 OP Location · 1 edit the addressee · 2 edit your callsign (empty:
  *   the boot message's) · 3 SSID · 4 path (DIRECT, WIDE1-1, WIDE1-1,WIDE2-1) ·
  *   EXIT back to OnePress. Editing: 2-9 multi-tap A-Z and the digit, held: the
  *   digit; 0 and 1 digits (1 again: '-'), EXIT deletes, MENU done.
@@ -19,6 +19,8 @@
  * background receiver (API level 5) listens for messages to the callsign and
  * SSID set here. To a station in the inbox, the message goes out on the
  * frequency its last message was heard on (shown, and marked REPLY).
+ * A saved location (OP Location, key 6) attached with key 5 follows the
+ * message in the same transmission, as a position report "!DDMM.mmN/DDDMM.mmW[".
  */
 
 #include <stdint.h>
@@ -44,6 +46,8 @@
 #define CALL_MAX    6u
 #define TO_MAX      9u
 #define FRAME_MAX   (7u * 4u + 2u + 11u + TEXT_MAX + 3u + 2u)   /* "{12" */
+#define POS_MAX     (7u * 4u + 2u + 20u + 2u)                   /* "!4903.50N/07201.75W[" */
+#define GAP_FLAGS   4u      /* between the message and the position */
 #define LOOP_MS     40u
 #define TAP_MS      1000u
 #define HOLD_MS     600u    /* a key held while editing: its digit */
@@ -59,11 +63,12 @@ static struct {
     const app_api_t *api;
     bool reply;
     uint8_t flen, prevKey, space, ones, status, edit, tapKey, tapAt, sent, id, delivered;
-    bool running, redraw;
+    bool running, redraw, locChanged, toLoc;
     uint32_t tPrev, tCyc, next, tapMs, downAt;
     bool held;
     uint8_t cfg[16];        /* call[6], to[9], route: 0x80 (saved) | path << 4 | SSID */
-    uint8_t frm[FRAME_MAX];
+    uint8_t frm[FRAME_MAX], pos[POS_MAX], plen;
+    app_loc_t *loc;
     char str[34];
 } g;
 #define A (g.api)
@@ -98,19 +103,50 @@ static uint8_t *addr(uint8_t *f, const char *c, uint8_t n, uint8_t ssid, bool la
     return f;
 }
 
-static void build(void)
+/* The addresses (DEST, the callsign, the path) and the UI frame's control and PID. */
+static uint8_t *head(uint8_t *f, const char *c, uint8_t n)
 {
-    char c[12];
-    uint8_t n = myCall(c), path = (uint8_t)((ROUTE >> 4) & 7u), *f = g.frm;
-    g.flen = 0;
-    if (!n) { g.status = ST_NOCALL; return; }
-    if (!flen(TO, TO_MAX)) { g.status = ST_NOTO; return; }
-    if (!A->op_text[0]) { g.status = ST_NOTEXT; return; }
+    const uint8_t path = (uint8_t)((ROUTE >> 4) & 7u);
     f = addr(f, DEST, 5, 0, false);
     f = addr(f, c, n, (uint8_t)(ROUTE & 15u), path == 0);
     if (path) f = addr(f, "WIDE1", 5, 1, path == 1);
     if (path == 2) f = addr(f, "WIDE2", 5, 1, true);
     *f++ = 0x03; *f++ = 0xF0;                       /* UI frame, no layer 3 */
+    return f;
+}
+/* The FCS after the frame [b, f): its length. */
+static uint8_t fcs(uint8_t *b, uint8_t *f)
+{
+    uint8_t k = (uint8_t)(f - b);
+    uint16_t crc = 0xFFFFu;                         /* CRC-16/X.25 */
+    for (uint8_t i = 0; i < k; i++) {
+        crc ^= b[i];
+        for (uint8_t j = 0; j < 8u; j++) crc = (crc & 1u) ? (uint16_t)((crc >> 1) ^ 0x8408u) : (uint16_t)(crc >> 1);
+    }
+    crc ^= 0xFFFFu;
+    b[k++] = (uint8_t)crc;
+    b[k++] = (uint8_t)(crc >> 8);
+    return k;
+}
+/* The attached location, if it is set: its slot (1-4), else 0. */
+static uint8_t attached(void)
+{
+    char r[21];
+    return A->loc_report(r) ? g.loc->attach : 0u;
+}
+
+static void build(void)
+{
+    char c[12];
+    uint8_t n = myCall(c), *f = g.frm;
+    g.flen = g.plen = 0;
+    if (!n) { g.status = ST_NOCALL; return; }
+    if (!flen(TO, TO_MAX)) { g.status = ST_NOTO; return; }
+    if (!A->op_text[0]) { g.status = ST_NOTEXT; return; }
+    uint8_t *p = head(g.pos, c, n);
+    const uint8_t r = A->loc_report((char *)p);     /* the position report after it */
+    if (r) g.plen = fcs(g.pos, p + r);
+    f = head(f, c, n);
     *f++ = ':';
     for (uint8_t i = 0; i < TO_MAX; i++) *f++ = TO[i] ? TO[i] : ' ';
     *f++ = ':';
@@ -124,16 +160,7 @@ static void build(void)
     *f++ = '{';
     if (g.id >= 10u) *f++ = (uint8_t)('0' + g.id / 10u);
     *f++ = (uint8_t)('0' + g.id % 10u);
-    uint8_t k = (uint8_t)(f - g.frm);
-    uint16_t crc = 0xFFFFu;                         /* CRC-16/X.25 */
-    for (uint8_t i = 0; i < k; i++) {
-        crc ^= g.frm[i];
-        for (uint8_t b = 0; b < 8u; b++) crc = (crc & 1u) ? (uint16_t)((crc >> 1) ^ 0x8408u) : (uint16_t)(crc >> 1);
-    }
-    crc ^= 0xFFFFu;
-    g.frm[k++] = (uint8_t)crc;
-    g.frm[k++] = (uint8_t)(crc >> 8);
-    g.flen = k;
+    g.flen = fcs(g.frm, f);
 }
 
 /* ---- AFSK, as APRS TX ---- */
@@ -191,6 +218,11 @@ static void send(void)
     for (uint8_t i = 0; i < TXDELAY_FLAGS; i++) sendByte(0x7E, false);
     g.ones = 0;
     for (uint8_t i = 0; i < g.flen; i++) sendByte(g.frm[i], true);
+    if (g.plen) {                                   /* the location, in the same transmission */
+        for (uint8_t i = 0; i < GAP_FLAGS; i++) sendByte(0x7E, false);
+        g.ones = 0;
+        for (uint8_t i = 0; i < g.plen; i++) sendByte(g.pos[i], true);
+    }
     for (uint8_t i = 0; i < TAIL_FLAGS; i++) sendByte(0x7E, false);
     while ((int32_t)(clkCyc() - g.next) < 0) {}
     A->tx_mute(true);
@@ -249,6 +281,7 @@ static void draw(void)
     if (ROUTE & 15u) { *o++ = '-'; o = putu(o, ROUTE & 15u); }
     if ((ROUTE >> 4) & 7u) { *o++ = ' '; o = put(o, PATHS[(ROUTE >> 4) & 7u]); }
     if (g.reply) o = put(o, " REPLY");
+    if (attached()) { o = put(o, " @"); *o++ = (char)('0' + attached()); }
     tiny(27, o);                                    /* print_tiny rows are y + 8: clear of the frequency at 40 */
     A->draw_frequency(A->tx_freq(), 0, 4);
     o = g.str;
@@ -319,6 +352,13 @@ static void keys(void)
     else if (key == APP_KEY_1) { g.edit = ED_TO; g.tapKey = 0xFF; }
     else if (key == APP_KEY_2) { g.edit = ED_CALL; g.tapKey = 0xFF; }
     else if (key == APP_KEY_3) ROUTE = (uint8_t)((ROUTE & 0xF0u) | ((ROUTE + 1u) & 15u));
+    else if (key == APP_KEY_5) {                   /* the next set location, then none */
+        uint8_t a = g.loc->attach > 4u ? 0u : g.loc->attach;
+        do a = (uint8_t)(a >= 4u ? 0u : a + 1u); while (a && g.loc->lat[a - 1u] == APP_LOC_NONE);
+        g.loc->attach = a;
+        g.locChanged = true;
+    }
+    else if (key == APP_KEY_6) { g.running = false; g.toLoc = true; }
     else if (key == APP_KEY_4) ROUTE = (uint8_t)(0x80u | (ROUTE & 15u) | (((ROUTE >> 4) & 7u) >= 2u ? 0u : (((ROUTE >> 4) & 7u) + 1u) << 4));
 }
 
@@ -326,6 +366,7 @@ __attribute__((section(".text.entry"), used))
 void app_main(const app_api_t *api)
 {
     g.api = api;
+    g.loc = api->loc();
     g.prevKey = APP_KEY_INVALID;
     char to[TO_MAX + 1];
     int16_t r = api->handoff_read(to, TO_MAX, NULL);   /* a reply's addressee */
@@ -346,7 +387,9 @@ void app_main(const app_api_t *api)
         api->backlight_update();
     }
     api->cfg_save(g.cfg, sizeof g.cfg);
+    if (g.locChanged) api->loc_save();
     listen();                                       /* the callsign or SSID may have changed */
+    if (g.toLoc && api->handoff("OP Location", NULL, 0)) return;
     const uint8_t sent = g.sent ? 1u : 0u;          /* back to OnePress (1: sent) */
     api->handoff("OnePress", &sent, 1);
 }

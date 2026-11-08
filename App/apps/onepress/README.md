@@ -8,7 +8,8 @@ the radio listens for answers while you type:
 - `OP APRS` sends it as an APRS message to a callsign (Bell 202 AFSK, as APRS TX);
 - `OP CW` sends it in Morse, as a tone over FM (MCW) or with the carrier keyed;
 - `OP Inbox` shows the APRS messages to your callsign that the radio heard in
-  the background while these apps were open, and replies to them.
+  the background while these apps were open, and replies to them;
+- `OP Location` keeps 4 locations, one of which OP APRS can send after a message.
 
 The decoder is [OnePress](https://github.com/JamesDavid/OnePress-Keyboard)
 (`App/onepress`, PolyForm Noncommercial 1.0.0: the OnePress edition is for
@@ -39,8 +40,9 @@ saw, the words neither knows spelled out:
    receiver. After flashing it over another edition, check `F Lock` (hidden
    menu): profiles after `438` moved up two places. Put it in a Multiboot slot
    to keep your usual edition.
-2. Build the apps, `./compile-app.sh onepress opaprs opcw opinbox`, and install
-   `OnePress.app`, `OPAPRS.app`, `OPCW.app` and `OPInbox.app` with UV Studio.
+2. Build the apps, `./compile-app.sh onepress opaprs opcw opinbox oploc`, and
+   install `OnePress.app`, `OPAPRS.app`, `OPCW.app`, `OPInbox.app` and
+   `OPLocation.app` with UV Studio.
    Reinstall them all after flashing a new firmware.
 3. Upload the model over the USB-C cable, from the main screen:
    `python tools/onepress_upload.py COM5 onepress-r.bin` (`pip install pyserial`;
@@ -121,6 +123,8 @@ keep the frequency in flash too. Otherwise it goes out on the TX VFO.
 | Key | Action |
 |---|---|
 | PTT | send (only PTT: a MENU pressed once too often must not transmit) |
+| 5 | the location sent after the message: none, then each saved one (`@1` on the `FROM` line) |
+| 6 | OP Location, to enter the locations |
 | 1 | edit the addressee |
 | 2 | edit your callsign (empty: the one in the boot message) |
 | 3 / 4 | SSID / path: `DIRECT`, `WIDE1-1`, `WIDE1-1,WIDE2-1` |
@@ -131,6 +135,29 @@ and 1 digits (1 again: `-`), EXIT deletes, MENU done. Defaults: SSID 7,
 `WIDE1-1`. Set the VFO to 144.390 MHz (North America) or 144.800 MHz
 (Europe) first. The tone level is APRS TX's default, which Yaesu and UV-K1
 receivers decoded first try.
+
+A location attached with `5` follows the message in the same transmission,
+as a position report: `SRC-SSID>APZOP,path:!4903.50N/07201.75W[` (a person
+on the map). APRS messages cannot carry a position themselves; the addressee's
+APRS app and aprs.fi show this one next to the message.
+
+## OP Location
+
+Four slots for places you send from: home, a club, where you are now. They are
+kept over power off with the inbox (external flash).
+
+| Key | Action |
+|---|---|
+| UP / DOWN | the slot |
+| MENU | edit it |
+| 5 | send it after OP APRS's messages (`SENT`); again: none |
+| EXIT | back to OP APRS |
+
+Editing: type the digits in order, degrees, minutes and hundredths of a minute,
+latitude then longitude: 49 03.50 N, 072 01.75 W is `4903500720175`. `*`
+switches N / S, `F` E / W (W to start with), EXIT deletes a digit (with none
+left: the slot is cleared), MENU done. A GPS or a map app gives degrees and
+minutes; from decimal degrees, the minutes are the decimals times 60.
 
 ## OP CW
 
@@ -147,7 +174,7 @@ receivers decoded first try.
 
 ## Testing on a PC
 
-`tools/onepress_sim/build.sh` builds `build/opsim`, which runs the four apps
+`tools/onepress_sim/build.sh` builds `build/opsim`, which runs the five apps
 against a simulated radio: the real resident service and decoder, the model
 file as the external flash, keys from a script, the screen as text, and every
 APRS transmission decoded back from its tones, FCS checked. For example
@@ -163,11 +190,12 @@ The decoder takes about 21 KB of flash and 2.1 KB of RAM (1.6 KB of working
 memory, a 256-byte read cache, the model's table), plus up to 2.5 KB of stack
 while it decodes; `System Info` shows the stack margin left. A key press reads
 the model about 2,000 times (32 bytes each, about 16 us at 24 MHz) with the cache. The apps fit the
-4 KiB overlay: OnePress 3.9 KB, OP APRS 2.9 KB, OP CW 1.5 KB, OP Inbox 1.5 KB.
+4 KiB overlay: OnePress 3.9 KB, OP APRS 4.0 KB, OP CW 1.5 KB, OP Inbox 1.5 KB,
+OP Location 1.6 KB.
 
 The receiver (`App/onepress/aprs_rx.c`, the APRS RX app's demodulator, and
 `App/app/aprs_bg.c`, with the inbox store `App/app/aprs_store.c` and the ack
-sender) takes about 4.8 KB of flash and 0.9 KB of RAM. TIM15
+sender and the locations) takes about 5.7 KB of flash and 0.9 KB of RAM. TIM15
 starts each ADC conversion of the RX audio, 9600 a second, so the samples stay
 evenly spaced however late the interrupt runs; the interrupt uses about 8% of
 the CPU.
